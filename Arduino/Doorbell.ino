@@ -59,8 +59,8 @@ char szAlertType[8];
 char szAlertDescription[32];
 char szAlertMessage[4096];
 unsigned long alert_expire;
-float TempF  = 82.6;
-int rh = 50;
+float TempF;
+int rh;
 int8_t TZ;
 int8_t DST;
 
@@ -103,9 +103,19 @@ String dataJson()
 {
     String s = "{\"weather\": \"";
     s += szWeatherCond;
-    s += ",\"pir\": \"";
-    s += pirTime;
-    s += "\"}";
+    s += "\",\"pir\": \"";
+    s += timeToTxt(pirStamp);
+    s += "\"";
+    for(int i = 0; i < 16; i++)
+    {
+      s += ",\"t";
+      s += i;
+      s += "\":\"";
+      if(doorbellTimeIdx > i)
+        s += timeToTxt(doorbellTimes[0]);
+      s += "\"";
+    }
+    s += "}";
     return s;
 }
 
@@ -241,9 +251,14 @@ void handleRoot() // Main webpage interface
          "eventSource.addEventListener('error', function(e){},false);"
          "eventSource.addEventListener('alert', function(e){alert(e.data)},false);"
          "eventSource.addEventListener('state',function(e){"
-           "d = JSON.parse(e.data);"
-           "t=new Date(+d.pir*1000); document.all.pir.innerHTML=r.toLocaleTimeString();"
-         "},false)"
+           "d=JSON.parse(e.data);"
+           "document.all.mot.innerHTML=d.pir;"
+           "for(i=0;i<16;i++){"
+            "item=eval('document.all.t'+i);tm1=eval('d.t'+i);"
+            "item.innerHTML=tm1;"
+            "item.setAttribute('style',tm1.length?'':'display:none')"
+           "}"
+         "},false);"
       "}"
       "function reset(){"
         "$.post(\"s\", { R: 0, key: document.all.myKey.value });"
@@ -261,7 +276,7 @@ void handleRoot() // Main webpage interface
       "}"
       "setInterval(timer,1000);"
       "t=";
-  page += now() - (3600 * TZ);// - (DST * 3600); // set to GMT
+  page += now() - (3600 * TZ); // set to GMT
   page +="000;function timer(){" // add 000 for ms
           "t+=1000;d=new Date(t);"
           "document.all.time.innerHTML=d.toLocaleTimeString()}"
@@ -276,21 +291,19 @@ void handleRoot() // Main webpage interface
           "<table align=\"center\">"
           "<tr><td><p id=\"time\">";
   page += timeFmt();
-  page += "</p></td><td></td></tr>";
-  if(doorbellTimeIdx)
+  page += "</p></td><td></td></tr>"
+           "<tr><td colspan=2>Doorbell Rings: <input type=\"button\" value=\"Clear\" id=\"resetBtn\" onClick=\"{reset()}\">"
+           "</td></tr>";
+  for(int i = 0; i < 16; i++)
   {
-    page += "<tr><td colspan=2>Doorbell Rings: <input type=\"button\" value=\"Clear\" id=\"resetBtn\" onClick=\"{reset()}\"></td></tr>";
-    for(int i = 0; i < 16; i++)
-    {
-      page += "<tr><td></td><td><div id=\"t";
-      page += i;
-      page += "\"";
-      if(i >= doorbellTimeIdx)
-        page += " style=\"display:none\""; // unused
-      page += ">";
-      page += timeToTxt(doorbellTimes[i]);
-      page += "</div></td></tr>";
-    }
+    page += "<tr><td></td><td><div id=\"t";
+    page += i;
+    page += "\"";
+    if(i >= doorbellTimeIdx)
+      page += " style=\"display:none\""; // unused=invisible
+    page += ">";
+    page += timeToTxt(doorbellTimes[i]);
+    page += "</div></td></tr>";
   }
   page += "<tr><td>Motion:</td><td><div id=\"mot\">";
   page += timeToTxt(pirStamp);
@@ -394,6 +407,8 @@ void handleJson()
 {
   String s = "{\"weather\": \"";
   s += szWeatherCond;
+  s += "\",\"location\": \"";
+  s += ee.location;
   s += "\",\"bellCount\": ";
   s += doorbellTimeIdx;
   s += ",\"display\": ";
@@ -404,8 +419,17 @@ void handleJson()
   s += rh;
   s += ",\"time\": ";
   s += now();
-  s += ",\"pir\": \"";
+  s += ",\"pir\": ";
   s += pirTime;
+  for(int i = 0; i < 16; i++)
+  {
+    s += ",\"t";
+    s += i;
+    s += "\":\"";
+    if(doorbellTimeIdx > i)
+      s += timeToTxt(doorbellTimes[0]);
+    s += "\"";
+  }
   s += "}";
   server.send( 200, "text/json", s );
 }
@@ -468,7 +492,7 @@ void doorBell()
 {
   unsigned long newtime = now() - (3600 * TZ);
 
-  if(newtime < 1466300867) // date isn't set yet
+  if(dbTime == 0) // date isn't set yet
     return;
 
   if( newtime - dbTime < 10) // ignore bounces
@@ -480,6 +504,7 @@ void doorBell()
   doorbellTimes[doorbellTimeIdx].s = second();
   doorbellTimes[doorbellTimeIdx].a = isPM();
   event.alert("Doorbell "  + timeToTxt( doorbellTimes[doorbellTimeIdx]) );
+  event.push();
 
   // make sure it's more than 5 mins between triggers to send a PB
   if( newtime - dbTime > 5 * 60)
@@ -499,7 +524,7 @@ void motion()
 {
   unsigned long newtime = now() - (3600 * TZ);
 
-  if(newtime < 1466300867) // date isn't set yet
+  if(pirTime == 0) // date isn't set yet
     return;
 
   if( newtime - pirTime < 30) // limit triggers
@@ -517,7 +542,7 @@ void motion()
   pirStamp.a = isPM();
 
   event.alert("Motion "  + timeToTxt( pirStamp ) );
-
+  event.push();
   // make sure it's more than 5 mins between triggers to send a PB
   if( newtime - pirTime > 5 * 60)
   {
@@ -945,6 +970,8 @@ void wuCondCallback(uint16_t iEvent, uint16_t iName, int iValue, char *psValue)
       TZ = (iValue / 100);
       epoch += (3600 * TZ );
       setTime(epoch);
+      if(dbTime == 0)
+        dbTime = pirTime = epoch; // powerup setting
       break;
     case 16:
       iconFromName(psValue);
@@ -1020,7 +1047,6 @@ void wuAlertsCallback(uint16_t iEvent, uint16_t iName, int iValue, char *psValue
       break;
   }
 }
-//http://api.wunderground.com/api/3cc233e283d04bf7/alerts/q/41042.json
 
 void wuAlerts()
 {
