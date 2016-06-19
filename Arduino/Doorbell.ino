@@ -27,7 +27,7 @@ SOFTWARE.
 #include "icons.h"
 #include <DHT.h> // http://www.github.com/markruys/arduino-DHT
 #include <TimeLib.h> // http://www.pjrc.com/teensy/td_libs_Time.html
-#include <ssd1306_i2c.h> // https://github.com/CuriousTech/WiFi_Doorbell/Libraries/ssd1306_i2c
+#include <ssd1306_i2c.h>  // https://github.com/CuriousTech/WiFi_Doorbell/Libraries/ssd1306_i2c
 
 #include <WiFiClient.h>
 #include <WiFiClientSecure.h>
@@ -44,7 +44,8 @@ const char *pbToken = "pushbullet token here";
 const char *wuKey = "wunderground key goes here";
 
 #define ESP_LED    2  // low turns on ESP blue LED
-#define DOORBELL   5
+#define DOORBELL   4
+#define PIR        14
 #define SCL        13
 #define SDA        12
 
@@ -57,7 +58,7 @@ char szWind[32] = "NA";
 char szAlertType[8];
 char szAlertDescription[32];
 char szAlertMessage[4096];
-unsigned long alert_expire = 0;
+unsigned long alert_expire;
 float TempF  = 82.6;
 int rh = 50;
 int8_t TZ;
@@ -69,6 +70,9 @@ struct timeStamp{
 
 timeStamp doorbellTimes[16];
 int doorbellTimeIdx = 0;
+unsigned long dbTime;
+timeStamp pirStamp;
+unsigned long pirTime;
 
 SSD1306 display(0x3c, SDA, SCL); // Initialize the oled display for address 0x3c, sda=12, sdc=13
 int displayOnTimer;
@@ -99,6 +103,8 @@ String dataJson()
 {
     String s = "{\"weather\": \"";
     s += szWeatherCond;
+    s += ",\"pir\": \"";
+    s += pirTime;
     s += "\"}";
     return s;
 }
@@ -212,7 +218,7 @@ void handleRoot() // Main webpage interface
       "<script type=\"text/javascript\">"
       "oledon=";
   page += ee.bEnableOLED;
-  page += "pb=";
+  page += ";pb=";
   page += ee.bEnablePB;
   page += ";function startEvents()"
       "{"
@@ -256,7 +262,7 @@ void handleRoot() // Main webpage interface
           "<tr><td><p id=\"time\">";
   page += timeFmt();
   page += "</p></td><td>";
-  page += "<input type=\"button\" value=\"Reset\" id=\"resetBtn\" onClick=\"{reset()}\">"
+  page += "<input type=\"button\" value=\"Clear\" id=\"resetBtn\" onClick=\"{reset()}\">"
           "</td>"
           "</tr>";
   if(doorbellTimeIdx)
@@ -269,11 +275,15 @@ void handleRoot() // Main webpage interface
       page += "</tr></td>";
     }
   }
+  page += "<tr><td>Motion:</td><td>";
+  page += timeToTxt(pirStamp);
+  page += "</td></tr>";
+
   page += "<tr><td>Display:</td><td>"
           "<input type=\"button\" value=\"";
   page += ee.bEnableOLED ? "OFF":"ON";
   page += "\" id=\"OLED\" onClick=\"{oled()}\">"
-          "</td></tr>";
+          "</td></tr>"
           "<tr><td>PushBullet:</td><td>"
           "<input type=\"button\" value=\"";
   page += ee.bEnablePB ? "OFF":"ON";
@@ -377,6 +387,8 @@ void handleJson()
   s += rh;
   s += ",\"time\": ";
   s += now();
+  s += ",\"pir\": \"";
+  s += pirTime;
   s += "}";
   server.send( 200, "text/json", s );
 }
@@ -437,7 +449,9 @@ void handleNotFound() {
 // called when doorbell rings (or test)
 void doorBell()
 {
-  if(doorbellTimeIdx >= 16)
+  unsigned long newtime = now() - (3600 * TZ);
+
+  if( newtime - dbTime < 2) // ignore bounces
     return;
 
   doorbellTimes[doorbellTimeIdx].wd = weekday()-1;
@@ -446,9 +460,44 @@ void doorBell()
   doorbellTimes[doorbellTimeIdx].s = second();
   doorbellTimes[doorbellTimeIdx].a = isPM();
   event.alert("Doorbell "  + timeToTxt( doorbellTimes[doorbellTimeIdx]) );
-  if(ee.bEnablePB)
-    pushBullet("Doorbell", "The doorbell rang at " + timeToTxt( doorbellTimes[doorbellTimeIdx]) );
-  doorbellTimeIdx++;
+
+  // make sure it's more than 5 mins between triggers to send a PB
+  if( newtime - dbTime > 5 * 60)
+  {
+    if(ee.bEnablePB)
+      pushBullet("Doorbell", "The doorbell rang at " + timeToTxt( doorbellTimes[doorbellTimeIdx]) );
+  }
+
+  if(doorbellTimeIdx < 16)
+    doorbellTimeIdx++;
+
+  dbTime = newtime; // latest trigger
+}
+
+// called when motion sensed
+void motion()
+{
+  unsigned long newtime = now() - (3600 * TZ);
+
+  if( newtime - pirTime < 2) // ignore bounces
+    return;
+
+  pirStamp.wd = weekday()-1;
+  pirStamp.h = hourFormat12();
+  pirStamp.m = minute();
+  pirStamp.s = second();
+  pirStamp.a = isPM();
+
+  event.alert("Motion "  + timeToTxt( pirStamp ) );
+
+  // make sure it's more than 5 mins between triggers to send a PB
+  if( newtime - pirTime > 5 * 60)
+  {
+    if(ee.bEnablePB)
+      pushBullet("Doorbell", "Motion at " + timeToTxt( pirStamp) );
+  }
+
+  pirTime = newtime; // latest trigger
 }
 
 volatile bool doorBellTriggered = false;
@@ -458,11 +507,20 @@ void doorbellISR()
   doorBellTriggered = true;
 }
 
+volatile bool pirTriggered = false;
+
+void pirISR()
+{
+  pirTriggered = true;
+}
+
 void setup()
 {
   pinMode(ESP_LED, OUTPUT);
   pinMode(DOORBELL, INPUT_PULLUP);
   attachInterrupt(DOORBELL, doorbellISR, FALLING);
+  pinMode(PIR, INPUT);
+  attachInterrupt(PIR, pirISR, FALLING);
 
   // initialize dispaly
   display.init();
@@ -506,16 +564,26 @@ void loop()
   static uint8_t hour_save, sec_save, min_save;
   static uint8_t wuMins = 11;
   static uint8_t wuCall = 0;
+  static uint8_t pirOld = 0;
+  static bool bPulseLED = false;
 
   MDNS.update();
   server.handleClient();
   wuClient1.service();
   wuClient2.service();
 
+  if(pirTriggered)
+  {
+    pirTriggered = false;
+    motion();
+    bPulseLED = true;
+  }
+
   if(doorBellTriggered)
   {
     doorBellTriggered = false;
     doorBell();
+    bPulseLED = true;
   }
 
   if(sec_save != second()) // only do stuff once per second (loop is maybe 20-30 Hz)
@@ -562,6 +630,16 @@ void loop()
     if(alert_expire && alert_expire > now()) // if active alert
     {
       alert_expire = 0;
+    }
+
+    if(bPulseLED)
+    {
+      bPulseLED = false;
+      digitalWrite(ESP_LED, LOW); // turn blue LED on for a second
+    }
+    else
+    {
+      digitalWrite(ESP_LED, HIGH);
     }
 
     event.heartbeat();
