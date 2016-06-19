@@ -94,7 +94,7 @@ struct eeSet // EEPROM backed data
 };
 eeSet ee = { sizeof(eeSet), 0xAAAA,
   "41042", // "KKYFLORE10"
-  true,   // Enable pushbullet
+  false,   // Enable pushbullet
   true,   // Enable OLED
   ""
 };
@@ -212,7 +212,21 @@ void handleRoot() // Main webpage interface
 
   String page = "<!DOCTYPE html><html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>"
       "<title>WiFi Doorbell</title>"
-      "<style>div,input {margin-bottom: 5px;}body{width:260px;display:block;margin-left:auto;margin-right:auto;text-align:right;font-family: Arial, Helvetica, sans-serif;}}</style>"
+//      "<style>div,input {margin-bottom: 5px;}body{width:260px;display:block;margin-left:auto;margin-right:auto;text-align:right;font-family: Arial, Helvetica, sans-serif;}}</style>"
+      "<style type=\"text/css\">"
+      "div,table,input{"
+      "border-radius: 5px;"
+      "margin-bottom: 5px;"
+      "box-shadow: 2px 2px 12px #000000;"
+      "background-image: -moz-linear-gradient(top, #ffffff, #50a0ff);"
+      "background-image: -ms-linear-gradient(top, #ffffff, #50a0ff);"
+      "background-image: -o-linear-gradient(top, #ffffff, #50a0ff);"
+      "background-image: -webkit-linear-gradient(top, #efffff, #50a0ff);"
+      "background-image: linear-gradient(top, #ffffff, #50a0ff);"
+      "background-clip: padding-box;"
+      "}"
+      "body{width:240px;font-family: Arial, Helvetica, sans-serif;}"
+      "</style>"
 
       "<script src=\"http://ajax.googleapis.com/ajax/libs/jquery/1.3.2/jquery.min.js\" type=\"text/javascript\" charset=\"utf-8\"></script>"
       "<script type=\"text/javascript\">"
@@ -228,6 +242,7 @@ void handleRoot() // Main webpage interface
          "eventSource.addEventListener('alert', function(e){alert(e.data)},false);"
          "eventSource.addEventListener('state',function(e){"
            "d = JSON.parse(e.data);"
+           "t=new Date(+d.pir*1000); document.all.pir.innerHTML=r.toLocaleTimeString();"
          "},false)"
       "}"
       "function reset(){"
@@ -257,27 +272,29 @@ void handleRoot() // Main webpage interface
       "for(i=0;i<document.forms.length;i++) document.forms[i].elements['key'].value=key;"
       "startEvents();}\">";
 
-  page += "<h3>WiFi Doorbell</h3>"
-          "<table align=\"right\">"
+  page += "<div><h3 align=\"center\">WiFi Doorbell</h3>"
+          "<table align=\"center\">"
           "<tr><td><p id=\"time\">";
   page += timeFmt();
-  page += "</p></td><td>";
-  page += "<input type=\"button\" value=\"Clear\" id=\"resetBtn\" onClick=\"{reset()}\">"
-          "</td>"
-          "</tr>";
+  page += "</p></td><td></td></tr>";
   if(doorbellTimeIdx)
   {
-    page += "<tr><td colspan=2>Doorbell Rings:</td></tr>";
-    for(int i = 0; i < doorbellTimeIdx; i++)
+    page += "<tr><td colspan=2>Doorbell Rings: <input type=\"button\" value=\"Clear\" id=\"resetBtn\" onClick=\"{reset()}\"></td></tr>";
+    for(int i = 0; i < 16; i++)
     {
-      page += "<tr><td colspan=2>";
+      page += "<tr><td></td><td><div id=\"t";
+      page += i;
+      page += "\"";
+      if(i >= doorbellTimeIdx)
+        page += " style=\"display:none\""; // unused
+      page += ">";
       page += timeToTxt(doorbellTimes[i]);
-      page += "</tr></td>";
+      page += "</div></td></tr>";
     }
   }
-  page += "<tr><td>Motion:</td><td>";
+  page += "<tr><td>Motion:</td><td><div id=\"mot\">";
   page += timeToTxt(pirStamp);
-  page += "</td></tr>";
+  page += "</div></td></tr>";
 
   page += "<tr><td>Display:</td><td>"
           "<input type=\"button\" value=\"";
@@ -302,7 +319,7 @@ void handleRoot() // Main webpage interface
           "<input type=\"button\" value=\"Save\" onClick=\"{localStorage.setItem('key', key = document.all.myKey.value)}\">"
           "<br><small>Logged IP: ";
   page += ipString(server.client().remoteIP());
-  page += "</small><br></body></html>";
+  page += "</small></div></body></html>";
 
   server.send ( 200, "text/html", page );
 }
@@ -451,7 +468,10 @@ void doorBell()
 {
   unsigned long newtime = now() - (3600 * TZ);
 
-  if( newtime - dbTime < 2) // ignore bounces
+  if(newtime < 1466300867) // date isn't set yet
+    return;
+
+  if( newtime - dbTime < 10) // ignore bounces
     return;
 
   doorbellTimes[doorbellTimeIdx].wd = weekday()-1;
@@ -479,8 +499,16 @@ void motion()
 {
   unsigned long newtime = now() - (3600 * TZ);
 
-  if( newtime - pirTime < 2) // ignore bounces
+  if(newtime < 1466300867) // date isn't set yet
     return;
+
+  if( newtime - pirTime < 30) // limit triggers
+    return;
+
+  Serial.print("time ");
+  Serial.print(newtime);
+  Serial.print(" ");
+  Serial.println(pirTime);
 
   pirStamp.wd = weekday()-1;
   pirStamp.h = hourFormat12();
