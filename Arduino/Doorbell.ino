@@ -38,44 +38,43 @@ SOFTWARE.
 #include <Event.h>  // https://github.com/CuriousTech/ESP8266-HVAC/tree/master/Libraries/Event
 #include <JsonClient.h> // https://github.com/CuriousTech/ESP8266-HVAC/tree/master/Libraries/JsonClient
  
-const char *controlPassword = "password"; // device password for modifying any settings
-int serverPort = 80;
-const char *pbToken = "pushbullet token here";
-const char *wuKey = "wunderground key goes here";
+const char controlPassword[] = "password"; // device password for modifying any settings
+int serverPort = 80; // port to access this device
 
 #define ESP_LED    2  // low turns on ESP blue LED
-#define DOORBELL   4
+#define DOORBELL   4 // Note: GPIO4 and GPIO5 are reversed on every pinout on the net
 #define PIR        14
 #define SCL        13
 #define SDA        12
 
-uint32_t lastIP;
+IPAddress lastIP;
 int nWrongPass;
 
 const char *pIcon = icon12;
-char szWeatherCond[32] = "NA";
-char szWind[32] = "NA";
-char szAlertType[8];
-char szAlertDescription[32];
-char szAlertMessage[4096];
-unsigned long alert_expire;
+char szWeatherCond[32] = "NA"; // short description
+char szWind[32] = "NA";        // Wind direction (SSW, NWN...)
+char szAlertType[8];           // Alert type (WRN)
+char szAlertDescription[64];
+//char szAlertMessage[4096];    // these are huge
+unsigned long alert_expire;   // epoch of alert sell by date
 float TempF;
 int rh;
 int8_t TZ;
-int8_t DST;
+int8_t DST;  // TZ includes DST
 
-struct timeStamp{
+struct timeStamp{ // weekday + 12hr time
   uint8_t x,wd,h,m,s,a;
 };
 
-timeStamp doorbellTimes[16];
+#define DB_CNT 16
+timeStamp doorbellTimes[DB_CNT];
 int doorbellTimeIdx = 0;
 unsigned long dbTime;
 timeStamp pirStamp;
 unsigned long pirTime;
 
 SSD1306 display(0x3c, SDA, SCL); // Initialize the oled display for address 0x3c, sda=12, sdc=13
-int displayOnTimer;
+int displayOnTimer;             // temporary OLED turn-on
 String sMessage;
 
 WiFiManager wifi(0);  // AP page:  192.168.4.1
@@ -88,31 +87,38 @@ struct eeSet // EEPROM backed data
   uint16_t size;          // if size changes, use defauls
   uint16_t sum;           // if sum is diiferent from memory struct, write
   char    location[32];   // location for wunderground
-  bool    bEnablePB;
+  bool    bEnablePB[2];   // enable pushbullet for doorbell, motion
   bool    bEnableOLED;
+  bool    pad;
+  char    pbToken[40];    // 34
+  char    wuKey[20];      // 16
   char    reserved[64];
 };
 eeSet ee = { sizeof(eeSet), 0xAAAA,
   "41042", // "KKYFLORE10"
-  false,   // Enable pushbullet
+  {false, false},  // Enable pushbullet
   true,   // Enable OLED
+  false,
+  "pushbullet token here",
+  "wunderground key goes here",
   ""
 };
 
-String dataJson()
+String dataJson() // timed/instant pushed data
 {
     String s = "{\"weather\": \"";
     s += szWeatherCond;
     s += "\",\"pir\": \"";
     s += timeToTxt(pirStamp);
-    s += "\"";
-    for(int i = 0; i < 16; i++)
+    s += "\",\"bellCount\": ";
+    s += doorbellTimeIdx;
+    for(int i = 0; i < DB_CNT; i++)
     {
       s += ",\"t";
       s += i;
       s += "\":\"";
-      if(doorbellTimeIdx > i)
-        s += timeToTxt(doorbellTimes[0]);
+      if(doorbellTimeIdx > i)  // just make them "" if not valid
+        s += timeToTxt(doorbellTimes[i]);
       s += "\"";
     }
     s += "}";
@@ -130,18 +136,6 @@ void wuAlerts(void);
 const char days[7][4] = {"Sun","Mon","Tue","Wed","Thr","Fri","Sat"};
 const char months[12][4] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
 
-String ipString(IPAddress ip) // Convert IP to string
-{
-  String sip = String(ip[0]);
-  sip += ".";
-  sip += ip[1];
-  sip += ".";
-  sip += ip[2];
-  sip += ".";
-  sip += ip[3];
-  return sip;
-}
-
 bool parseArgs()
 {
   char temp[100];
@@ -149,35 +143,50 @@ bool parseArgs()
   int val;
   bool bRemote = false;
   bool ipSet = false;
-  eeSet save;
-  memcpy(&save, &ee, sizeof(ee));
 
   Serial.println("parseArgs");
 
+  // get password first
   for ( uint8_t i = 0; i < server.args(); i++ ) {
     server.arg(i).toCharArray(temp, 100);
     String s = wifi.urldecode(temp);
-//    Serial.println( i + " " + server.argName ( i ) + ": " + s);
-    bool which = (tolower(server.argName(i).charAt(1) ) == 'n') ? 1:0;
- 
     switch( server.argName(i).charAt(0)  )
     {
       case 'k': // key
           password = s;
           break;
+    }
+  }
+
+  for ( uint8_t i = 0; i < server.args(); i++ ) {
+    server.arg(i).toCharArray(temp, 100);
+    String s = wifi.urldecode(temp);
+//    Serial.println( i + " " + server.argName ( i ) + ": " + s);
+ 
+    switch( server.argName(i).charAt(0)  )
+    {
       case 'O': // OLED
-          ee.bEnableOLED = (s == "true") ? true:false;
+          if(password == controlPassword)
+            ee.bEnableOLED = (s == "true") ? true:false;
           break;
       case 'P': // PushBullet
-          ee.bEnablePB = (s == "true") ? true:false;
+          if(password == controlPassword)
+          {
+            int which = (tolower(server.argName(i).charAt(1) ) == '1') ? 1:0;
+            ee.bEnablePB[which] = (s == "true") ? true:false;
+          }
           break;
       case 'R': // reset
-          doorbellTimeIdx = 0;
+          if(password == controlPassword)
+            doorbellTimeIdx = 0;
           break;
       case 'L': // location
-          s.toCharArray(ee.location, sizeof(ee.location)); 
+          if(password == controlPassword)
+            s.toCharArray(ee.location, sizeof(ee.location));
           break;
       case 'm':  // message
+          if(password != controlPassword)
+            break;
           alert_expire = 0; // also clears the alert
           sMessage = server.arg(i);
           if(ee.bEnableOLED == false && sMessage.length())
@@ -185,13 +194,22 @@ bool parseArgs()
             displayOnTimer = 60;
           }
           break;
+      case 'w': // wunderground key
+          if(password == controlPassword)
+            s.toCharArray(ee.wuKey, sizeof(ee.wuKey));
+          break;
+      case 'b': // pushbullet token
+          if(password == controlPassword)
+            s.toCharArray(ee.pbToken, sizeof(ee.pbToken));
+          break;
       case 't': // test
-          doorBell();
+          if(password == controlPassword)
+            doorBell();
           break;
     }
   }
 
-  uint32_t ip = server.client().remoteIP();
+  IPAddress ip = server.client().remoteIP();
 
   if(server.args() && (password != controlPassword) )
   {
@@ -201,15 +219,13 @@ bool parseArgs()
       nWrongPass <<= 1;
     if(ip != lastIP)  // if different IP drop it down
        nWrongPass = 10;
-    String data = "{ip:\"";
-    data += ipString(ip);
-    data += "\",pass:\"";
+    String data = "{\"ip\":\"";
+    data += ip.toString();
+    data += "\",\"pass\":\"";
     data += password;
     data += "\"}";
     event.push("hack", data); // log attempts
   }
-
-  if(nWrongPass) memcpy(&ee, &save, sizeof(ee)); // undo any changes
 
   lastIP = ip;
 }
@@ -222,7 +238,6 @@ void handleRoot() // Main webpage interface
 
   String page = "<!DOCTYPE html><html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>"
       "<title>WiFi Doorbell</title>"
-//      "<style>div,input {margin-bottom: 5px;}body{width:260px;display:block;margin-left:auto;margin-right:auto;text-align:right;font-family: Arial, Helvetica, sans-serif;}}</style>"
       "<style type=\"text/css\">"
       "div,table,input{"
       "border-radius: 5px;"
@@ -242,8 +257,10 @@ void handleRoot() // Main webpage interface
       "<script type=\"text/javascript\">"
       "oledon=";
   page += ee.bEnableOLED;
-  page += ";pb=";
-  page += ee.bEnablePB;
+  page += ";pb0=";
+  page += ee.bEnablePB[0];
+  page += ";pb1=";
+  page += ee.bEnablePB[1];
   page += ";function startEvents()"
       "{"
          "eventSource = new EventSource(\"events?i=60&p=1\");"
@@ -253,9 +270,12 @@ void handleRoot() // Main webpage interface
          "eventSource.addEventListener('state',function(e){"
            "d=JSON.parse(e.data);"
            "document.all.mot.innerHTML=d.pir;"
-           "for(i=0;i<16;i++){"
+           "for(i=0;i<";
+           page += DB_CNT;
+           page += ";i++){"
             "item=eval('document.all.t'+i);tm1=eval('d.t'+i);"
             "item.innerHTML=tm1;"
+            "item=eval('document.all.r'+i);"
             "item.setAttribute('style',tm1.length?'':'display:none')"
            "}"
          "},false);"
@@ -269,10 +289,15 @@ void handleRoot() // Main webpage interface
         "$.post(\"s\", { O: oledon, key: document.all.myKey.value });"
         "document.all.OLED.value=oledon?'OFF':'ON'"
       "}"
-      "function pbToggle(){"
-        "pb=!pb;"
-        "$.post(\"s\", { P: pb, key: document.all.myKey.value });"
-        "document.all.PB.value=pb?'OFF':'ON'"
+      "function pbToggle0(){"
+        "pb0=!pb0;"
+        "$.post(\"s\", { P0: pb0, key: document.all.myKey.value });"
+        "document.all.PB0.value=pb0?'OFF':'ON'"
+      "}"
+      "function pbToggle1(){"
+        "pb1=!pb1;"
+        "$.post(\"s\", { P1: pb1, key: document.all.myKey.value });"
+        "document.all.PB1.value=pb1?'OFF':'ON'"
       "}"
       "setInterval(timer,1000);"
       "t=";
@@ -294,13 +319,15 @@ void handleRoot() // Main webpage interface
   page += "</p></td><td></td></tr>"
            "<tr><td colspan=2>Doorbell Rings: <input type=\"button\" value=\"Clear\" id=\"resetBtn\" onClick=\"{reset()}\">"
            "</td></tr>";
-  for(int i = 0; i < 16; i++)
+  for(int i = 0; i < DB_CNT; i++)
   {
-    page += "<tr><td></td><td><div id=\"t";
+    page += "<tr id=r";
     page += i;
-    page += "\"";
     if(i >= doorbellTimeIdx)
       page += " style=\"display:none\""; // unused=invisible
+    page += "><td></td><td><div id=\"t";
+    page += i;
+    page += "\"";
     page += ">";
     page += timeToTxt(doorbellTimes[i]);
     page += "</div></td></tr>";
@@ -316,8 +343,11 @@ void handleRoot() // Main webpage interface
           "</td></tr>"
           "<tr><td>PushBullet:</td><td>"
           "<input type=\"button\" value=\"";
-  page += ee.bEnablePB ? "OFF":"ON";
-  page += "\" id=\"PB\" onClick=\"{pbToggle()}\">"
+  page += ee.bEnablePB[0] ? "OFF":"ON";
+  page += "\" id=\"PB0\" onClick=\"{pbToggle0()}\">"
+          "<input type=\"button\" value=\"";
+  page += ee.bEnablePB[1] ? "OFF":"ON";
+  page += "\" id=\"PB1\" onClick=\"{pbToggle1()}\">"
           "</td></tr>"
           "<tr><td>Message:</td><td>";
   page += valButton("M", "" );
@@ -331,20 +361,10 @@ void handleRoot() // Main webpage interface
           "<input id=\"myKey\" name=\"key\" type=text size=50 placeholder=\"password\" style=\"width: 150px\">"
           "<input type=\"button\" value=\"Save\" onClick=\"{localStorage.setItem('key', key = document.all.myKey.value)}\">"
           "<br><small>Logged IP: ";
-  page += ipString(server.client().remoteIP());
+  page += server.client().remoteIP().toString();
   page += "</small></div></body></html>";
 
   server.send ( 200, "text/html", page );
-}
-
-String button(String id, String text) // Reset button
-{
-  String s = "<form method='post'><input name='";
-  s += id;
-  s += "' type='submit' value='";
-  s += text;
-  s += "'><input type=\"hidden\" name=\"key\" value=\"value\"></form>";
-  return s;
 }
 
 String valButton(String id, String val)
@@ -395,7 +415,7 @@ void handleS()
     parseArgs();
 
     String page = "{\"ip\": \"";
-    page += ipString(WiFi.localIP());
+    page += WiFi.localIP().toString();
     page += ":";
     page += serverPort;
     page += "\"}";
@@ -421,13 +441,13 @@ void handleJson()
   s += now();
   s += ",\"pir\": ";
   s += pirTime;
-  for(int i = 0; i < 16; i++)
+  for(int i = 0; i < DB_CNT; i++)
   {
     s += ",\"t";
     s += i;
     s += "\":\"";
     if(doorbellTimeIdx > i)
-      s += timeToTxt(doorbellTimes[0]);
+      s += timeToTxt(doorbellTimes[i]);
     s += "\"";
   }
   s += "}";
@@ -503,17 +523,18 @@ void doorBell()
   doorbellTimes[doorbellTimeIdx].m = minute();
   doorbellTimes[doorbellTimeIdx].s = second();
   doorbellTimes[doorbellTimeIdx].a = isPM();
+
   event.alert("Doorbell "  + timeToTxt( doorbellTimes[doorbellTimeIdx]) );
   event.push();
 
   // make sure it's more than 5 mins between triggers to send a PB
   if( newtime - dbTime > 5 * 60)
   {
-    if(ee.bEnablePB)
+    if(ee.bEnablePB[0])
       pushBullet("Doorbell", "The doorbell rang at " + timeToTxt( doorbellTimes[doorbellTimeIdx]) );
   }
 
-  if(doorbellTimeIdx < 16)
+  if(doorbellTimeIdx < DB_CNT)
     doorbellTimeIdx++;
 
   dbTime = newtime; // latest trigger
@@ -546,7 +567,7 @@ void motion()
   // make sure it's more than 5 mins between triggers to send a PB
   if( newtime - pirTime > 5 * 60)
   {
-    if(ee.bEnablePB)
+    if(ee.bEnablePB[1])
       pushBullet("Doorbell", "Motion at " + timeToTxt( pirStamp) );
   }
 
@@ -680,7 +701,7 @@ void loop()
     if(nWrongPass)
       nWrongPass--;
 
-    if(alert_expire && alert_expire > now()) // if active alert
+    if(alert_expire && alert_expire < now()) // if active alert
     {
       alert_expire = 0;
     }
@@ -718,13 +739,13 @@ void DrawScreen()
     blnk = !blnk;
   }
 
-  if(ee.bEnableOLED || displayOnTimer)
+  if(ee.bEnableOLED || displayOnTimer || alert_expire)
   {
     String s;
 
     if(alert_expire) // if theres an alert message
     {
-      sMessage = szAlertMessage; // set the scroller message
+      sMessage = szAlertDescription; // set the scroller message
       if(blnk) display.drawXbm(0,20, 44, 42, pIcon);
     }
     else
@@ -766,13 +787,6 @@ void DrawScreen()
     if(blnk) display.drawXbm(0,20, 44, 42, bell);
     display.drawPropString(60, 23, String(doorbellTimeIdx) ); // count
   }
-  else if(alert_expire) // blink the alert
-  {
-    if(blnk) display.drawXbm(0,20, 44, 42, pIcon);
-    display.drawPropString(60, 23, szAlertType); // abrv alert
-
-    Scroller(szAlertMessage);
-  }
   display.display();
 }
 
@@ -782,6 +796,7 @@ void Scroller(String s)
   static int16_t ind = 0;
   static char last = 0;
   static int16_t x = 0;
+
   if(last != s.charAt(0)) // reset if content changed
   {
     x = 0;
@@ -859,7 +874,7 @@ void iconFromName(char *pName)
     if(!strcmp(pName, iconNames[nIcon]))
       break;
 
-  switch(nIcon) // rown column from image
+  switch(nIcon) // rown column from image at http://www.alessioatzeni.com/meteocons/
   {
     case 0:   pIcon = icon72; break;
     case 1:   pIcon = icon64; break;
@@ -908,7 +923,7 @@ const char *jsonList1[] = { "",
   "temp_f",
   "relative_humidity",
   "wind_string",       //       Calm
-  "wind_dir",          //       East, ENE
+  "wind_dir",          //       East, ENE, SW
   "wind_degrees",      // 5     0,45,90
   "wind_mph",          //       n
   "pressure_in",       //       nn.nn
@@ -979,12 +994,13 @@ void wuCondCallback(uint16_t iEvent, uint16_t iName, int iValue, char *psValue)
   }
 }
 
+// Call wunderground for conditions
 void wuConditions()
 {
   if(ee.location[0] == 0)
     return;
   String path = "/api/";
-  path += wuKey;
+  path += ee.wuKey;
   path += "/conditions/q/";
   path += ee.location;
   path += ".json";
@@ -1008,8 +1024,10 @@ void wuAlertsCallback(uint16_t iEvent, uint16_t iName, int iValue, char *psValue
 {
   switch(iName)
   {
-    case 0: // type
+    case 0: // type (3 letter)
       strncpy(szAlertType, psValue, sizeof(szAlertType));
+      Serial.print("alert type ");
+      Serial.println(szAlertType);
       break;
     case 1: // description
       strncpy(szAlertDescription, psValue, sizeof(szAlertDescription) );
@@ -1023,8 +1041,8 @@ void wuAlertsCallback(uint16_t iEvent, uint16_t iName, int iValue, char *psValue
       Serial.print("alert_expires ");
       Serial.println(alert_expire);
       break;
-    case 3: // message
-      {
+    case 3: // message (too long read)
+/*      {
         int i;
         for(i = 0; i < sizeof(szAlertMessage)-1; i++)
         {
@@ -1044,17 +1062,19 @@ void wuAlertsCallback(uint16_t iEvent, uint16_t iName, int iValue, char *psValue
 
       Serial.print("alert_message ");
       Serial.println(szAlertMessage);
+*/
       break;
   }
 }
 
+// Call wunderground to check alerts
 void wuAlerts()
 {
   if(ee.location[0] == 0)
     return;
 
   String path = "/api/";
-  path += wuKey;
+  path += ee.wuKey;
   path += "/alerts/q/";
   path += ee.location;
   path += ".json";
@@ -1104,17 +1124,23 @@ uint16_t Fletcher16( uint8_t* data, int count)
    return (sum2 << 8) | sum1;
 }
 
+// Send a push notification
 void pushBullet(const char *pTitle, String sBody)
 {
   WiFiClientSecure client;
   const char host[] = "api.pushbullet.com";
   const char url[] = "/v2/pushes";
 
+  Serial.println("pb");
+
   if (!client.connect(host, 443))
   {
     event.print("PushBullet connection failed");
     return;
   }
+
+  Serial.println("conn");
+  // Todo: The key should be verified here
 
   String data = "{\"type\": \"note\", \"title\": \"";
   data += pTitle;
@@ -1125,12 +1151,13 @@ void pushBullet(const char *pTitle, String sBody)
   client.print(String("POST ") + url + " HTTP/1.1\r\n" +
               "Host: " + host + "\r\n" +
               "Content-Type: application/json\r\n" +
-              "Access-Token: " + pbToken + "\r\n" +
+              "Access-Token: " + ee.pbToken + "\r\n" +
               "User-Agent: Arduino\r\n" +
               "Content-Length: " + data.length() + "\r\n" + 
               "Connection: close\r\n\r\n" +
               data + "\r\n\r\n");
  
+  Serial.println("sent");
   int i = 0;
   while (client.connected() && ++i < 10)
   {
