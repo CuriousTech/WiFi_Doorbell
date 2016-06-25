@@ -54,9 +54,9 @@ const char *pIcon = icon12;
 char szWeatherCond[32] = "NA"; // short description
 char szWind[32] = "NA";        // Wind direction (SSW, NWN...)
 char szAlertType[8];           // Alert type (WRN)
-char szAlertDescription[64];
-//char szAlertMessage[4096];    // these are huge
-unsigned long alert_expire;   // epoch of alert sell by date
+char szAlertDescription[64];   // Severe Thunderstorm Warning, Dense Fog, etc.
+//char szAlertMessage[4096];   // these are huge
+unsigned long alert_expire;    // epoch of alert sell by date
 float TempF;
 int rh;
 int8_t TZ;
@@ -136,15 +136,18 @@ void wuAlerts(void);
 const char days[7][4] = {"Sun","Mon","Tue","Wed","Thr","Fri","Sat"};
 const char months[12][4] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
 
-bool parseArgs()
+void parseParams()
 {
   char temp[100];
-  String password;
+  char password[64];
   int val;
   bool bRemote = false;
   bool ipSet = false;
 
-  Serial.println("parseArgs");
+//  Serial.println("parseArgs");
+
+  if(server.args() == 0)
+    return;
 
   // get password first
   for ( uint8_t i = 0; i < server.args(); i++ ) {
@@ -153,65 +156,14 @@ bool parseArgs()
     switch( server.argName(i).charAt(0)  )
     {
       case 'k': // key
-          password = s;
-          break;
-    }
-  }
-
-  for ( uint8_t i = 0; i < server.args(); i++ ) {
-    server.arg(i).toCharArray(temp, 100);
-    String s = wifi.urldecode(temp);
-//    Serial.println( i + " " + server.argName ( i ) + ": " + s);
- 
-    switch( server.argName(i).charAt(0)  )
-    {
-      case 'O': // OLED
-          if(password == controlPassword)
-            ee.bEnableOLED = (s == "true") ? true:false;
-          break;
-      case 'P': // PushBullet
-          if(password == controlPassword)
-          {
-            int which = (tolower(server.argName(i).charAt(1) ) == '1') ? 1:0;
-            ee.bEnablePB[which] = (s == "true") ? true:false;
-          }
-          break;
-      case 'R': // reset
-          if(password == controlPassword)
-            doorbellTimeIdx = 0;
-          break;
-      case 'L': // location
-          if(password == controlPassword)
-            s.toCharArray(ee.location, sizeof(ee.location));
-          break;
-      case 'm':  // message
-          if(password != controlPassword)
-            break;
-          alert_expire = 0; // also clears the alert
-          sMessage = server.arg(i);
-          if(ee.bEnableOLED == false && sMessage.length())
-          {
-            displayOnTimer = 60;
-          }
-          break;
-      case 'w': // wunderground key
-          if(password == controlPassword)
-            s.toCharArray(ee.wuKey, sizeof(ee.wuKey));
-          break;
-      case 'b': // pushbullet token
-          if(password == controlPassword)
-            s.toCharArray(ee.pbToken, sizeof(ee.pbToken));
-          break;
-      case 't': // test
-          if(password == controlPassword)
-            doorBell();
-          break;
+        s.toCharArray(password, sizeof(password));
+        break;
     }
   }
 
   IPAddress ip = server.client().remoteIP();
 
-  if(server.args() && (password != controlPassword) )
+  if(strcmp(controlPassword, password))
   {
     if(nWrongPass == 0) // it takes at least 10 seconds to recognize a wrong password
       nWrongPass = 10;
@@ -222,19 +174,63 @@ bool parseArgs()
     String data = "{\"ip\":\"";
     data += ip.toString();
     data += "\",\"pass\":\"";
-    data += password;
+    data += password; // a String object here adds a NULL.  Possible bug in SDK
     data += "\"}";
     event.push("hack", data); // log attempts
+    lastIP = ip;
+    return;
   }
 
   lastIP = ip;
+
+  for ( uint8_t i = 0; i < server.args(); i++ ) {
+    server.arg(i).toCharArray(temp, 100);
+    String s = wifi.urldecode(temp);
+//    Serial.println( i + " " + server.argName ( i ) + ": " + s);
+ 
+    switch( server.argName(i).charAt(0)  )
+    {
+      case 'O': // OLED
+            ee.bEnableOLED = (s == "true") ? true:false;
+          break;
+      case 'P': // PushBullet
+          {
+            int which = (tolower(server.argName(i).charAt(1) ) == '1') ? 1:0;
+            ee.bEnablePB[which] = (s == "true") ? true:false;
+          }
+          break;
+      case 'R': // reset
+          doorbellTimeIdx = 0;
+          break;
+      case 'L': // location
+          s.toCharArray(ee.location, sizeof(ee.location));
+          break;
+      case 'm':  // message
+          alert_expire = 0; // also clears the alert
+          sMessage = server.arg(i);
+          if(ee.bEnableOLED == false && sMessage.length())
+          {
+            displayOnTimer = 60;
+          }
+          break;
+      case 'w': // wunderground key
+          s.toCharArray(ee.wuKey, sizeof(ee.wuKey));
+          break;
+      case 'b': // pushbullet token
+          s.toCharArray(ee.pbToken, sizeof(ee.pbToken));
+          break;
+      case 't': // test
+          doorBell();
+          break;
+    }
+  }
 }
 
 void handleRoot() // Main webpage interface
 {
   Serial.println("handleRoot");
 
-  parseArgs();
+  parseParams();
 
   String page = "<!DOCTYPE html><html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>"
       "<title>WiFi Doorbell</title>"
@@ -355,7 +351,12 @@ void handleRoot() // Main webpage interface
           "<tr><td>Location:</td>";
   page += "<td>";  page += valButton("L", ee.location );
   page += "</td></tr>";
-
+  if(alert_expire)
+  {
+    page += "<tr><td>";
+    page += szAlertDescription;
+    page += "</td></tr>";
+  }
   page += "</table>"
 
           "<input id=\"myKey\" name=\"key\" type=text size=50 placeholder=\"password\" style=\"width: 150px\">"
@@ -412,14 +413,14 @@ String timeToTxt(timeStamp &t)  // string "Sun 12:00:00 AM"
 
 void handleS()
 {
-    parseArgs();
+  parseParams();
 
-    String page = "{\"ip\": \"";
-    page += WiFi.localIP().toString();
-    page += ":";
-    page += serverPort;
-    page += "\"}";
-    server.send ( 200, "text/json", page );
+  String page = "{\"ip\": \"";
+  page += WiFi.localIP().toString();
+  page += ":";
+  page += serverPort;
+  page += "\"}";
+  server.send ( 200, "text/json", page );
 }
 
 // JSON format for initial or full data read
@@ -487,7 +488,7 @@ void handleEvents()
       "Access-Control-Allow-Origin: *\r\n"
       "Content-Type: text/event-stream\r\n\r\n";
   server.sendContent(content);
-  event.set(server.client(), interval, nType); // copying the client before the send makes it work with SDK 2.2.0
+  event.set(server.client(), interval, nType);
 }
 
 void handleNotFound() {
@@ -510,12 +511,12 @@ void handleNotFound() {
 // called when doorbell rings (or test)
 void doorBell()
 {
-  unsigned long newtime = now() - (3600 * TZ);
-
   if(dbTime == 0) // date isn't set yet
     return;
 
-  if( newtime - dbTime < 10) // ignore bounces
+  unsigned long newtime = now() - (3600 * TZ);
+
+  if( newtime - dbTime < 10) // ignore bounces and double taps
     return;
 
   doorbellTimes[doorbellTimeIdx].wd = weekday()-1;
@@ -525,7 +526,7 @@ void doorBell()
   doorbellTimes[doorbellTimeIdx].a = isPM();
 
   event.alert("Doorbell "  + timeToTxt( doorbellTimes[doorbellTimeIdx]) );
-  event.push();
+  event.push(); // instant update on the web page
 
   // make sure it's more than 5 mins between triggers to send a PB
   if( newtime - dbTime > 5 * 60)
@@ -543,18 +544,13 @@ void doorBell()
 // called when motion sensed
 void motion()
 {
-  unsigned long newtime = now() - (3600 * TZ);
-
-  if(pirTime == 0) // date isn't set yet
+  if(pirTime == 0) // date isn't set yet (the PIR triggers at start anyway)
     return;
+
+  unsigned long newtime = now() - (3600 * TZ);
 
   if( newtime - pirTime < 30) // limit triggers
     return;
-
-  Serial.print("time ");
-  Serial.print(newtime);
-  Serial.print(" ");
-  Serial.println(pirTime);
 
   pirStamp.wd = weekday()-1;
   pirStamp.h = hourFormat12();
@@ -650,7 +646,7 @@ void loop()
   {
     pirTriggered = false;
     motion();
-    bPulseLED = true;
+    bPulseLED = true; // blinks the blue LED
   }
 
   if(doorBellTriggered)
@@ -677,7 +673,7 @@ void loop()
             {
               wuConditions();
               break;
-            } // fall through if not getting conditions
+            } // fall through if not getting conditions (checks alerts every 10 mins)
           case 1:
             wuAlerts();
             break;
@@ -695,7 +691,7 @@ void loop()
       }
     }
 
-    if(displayOnTimer) // if alerts or messages turn the display on
+    if(displayOnTimer) // if alerts or messages, turn the display on
       displayOnTimer--;
 
     if(nWrongPass)
@@ -733,7 +729,7 @@ void DrawScreen()
   // draw the screen here
   display.clear();
 
-  if( (millis() - last) > 400) // 400ms togle for blinker
+  if( (millis() - last) > 400) // 400ms toggle for blinky things
   {
     last = millis();
     blnk = !blnk;
@@ -874,9 +870,9 @@ void iconFromName(char *pName)
     if(!strcmp(pName, iconNames[nIcon]))
       break;
 
-  switch(nIcon) // rown column from image at http://www.alessioatzeni.com/meteocons/
+  switch(nIcon) // row column from image at http://www.alessioatzeni.com/meteocons/
   {
-    case 0:   pIcon = icon72; break;
+    case 0:   pIcon = icon72; break; // I have no idea if these are right
     case 1:   pIcon = icon64; break;
     case 2:   pIcon = icon44; break;
     case 3:   pIcon = icon43; break;
@@ -1026,23 +1022,28 @@ void wuAlertsCallback(uint16_t iEvent, uint16_t iName, int iValue, char *psValue
   {
     case 0: // type (3 letter)
       strncpy(szAlertType, psValue, sizeof(szAlertType));
-      Serial.print("alert type ");
-      Serial.println(szAlertType);
+//      Serial.print("alert type ");
+//      Serial.println(szAlertType);
       break;
     case 1: // description
       strncpy(szAlertDescription, psValue, sizeof(szAlertDescription) );
-      Serial.print("alert_desc ");
-      Serial.println(szAlertDescription);
+      strcat(szAlertDescription, "  "); // separate end and start on scroller
+//      Serial.print("alert_desc ");
+//      Serial.println(szAlertDescription);
+      if(szAlertDescription[0] && alert_expire == 0) // should only happen on first instance
+      {
+        event.alert(szAlertDescription);
+      }
       break;
     case 2: // expires
       alert_expire = iValue;
       alert_expire += (3600 * TZ );
 
-      Serial.print("alert_expires ");
-      Serial.println(alert_expire);
+//      Serial.print("alert_expires ");
+//      Serial.println(alert_expire);
       break;
-    case 3: // message (too long read)
-/*      {
+    case 3: // message (too long to read)
+/*    {
         int i;
         for(i = 0; i < sizeof(szAlertMessage)-1; i++)
         {
@@ -1057,6 +1058,7 @@ void wuAlertsCallback(uint16_t iEvent, uint16_t iName, int iValue, char *psValue
             szAlertMessage[i] = *psValue++;
           }
         }
+        szAlertMessage[i++] = ' '; // space
         szAlertMessage[i] = 0; //null term
       }
 
