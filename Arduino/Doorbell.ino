@@ -55,8 +55,8 @@ char szWeatherCond[32] = "NA"; // short description
 char szWind[32] = "NA";        // Wind direction (SSW, NWN...)
 char szAlertType[8];           // Alert type (WRN)
 char szAlertDescription[64];   // Severe Thunderstorm Warning, Dense Fog, etc.
-//char szAlertMessage[4096];   // these are huge
-unsigned long alert_expire;    // epoch of alert sell by date
+//char szAlertMessage[4096];    // these are huge
+unsigned long alert_expire;   // epoch of alert sell by date
 float TempF;
 int rh;
 int8_t TZ;
@@ -126,10 +126,10 @@ String dataJson() // timed/instant pushed data
 }
 
 eventHandler event(dataJson);
-void wuCondCallback(uint16_t iEvent, uint16_t iName, int iValue, char *psValue);
+void wuCondCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
 JsonClient wuClient1(wuCondCallback);
 void wuConditions(void);
-void wuAlertsCallback(uint16_t iEvent, uint16_t iName, int iValue, char *psValue);
+void wuAlertsCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
 JsonClient wuClient2(wuAlertsCallback);
 void wuAlerts(void);
 
@@ -935,7 +935,7 @@ const char *jsonList1[] = { "",
   NULL
 };
 
-void wuCondCallback(uint16_t iEvent, uint16_t iName, int iValue, char *psValue)
+void wuCondCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
 {
   static unsigned long epoch;
 
@@ -1016,7 +1016,7 @@ const char *jsonList2[] = { "",
   NULL
 };
 
-void wuAlertsCallback(uint16_t iEvent, uint16_t iName, int iValue, char *psValue)
+void wuAlertsCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
 {
   switch(iName)
   {
