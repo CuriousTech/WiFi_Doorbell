@@ -69,6 +69,7 @@ struct timeStamp{ // weekday + 12hr time
 #define DB_CNT 16
 timeStamp doorbellTimes[DB_CNT];
 int doorbellTimeIdx = 0;
+bool bAutoClear;
 unsigned long dbTime;
 timeStamp pirStamp;
 unsigned long pirTime;
@@ -89,7 +90,7 @@ struct eeSet // EEPROM backed data
   char    location[32];   // location for wunderground
   bool    bEnablePB[2];   // enable pushbullet for doorbell, motion
   bool    bEnableOLED;
-  bool    pad;
+  bool    bMotion;        // motion activated clear
   char    pbToken[40];    // 34
   char    wuKey[20];      // 16
   char    reserved[64];
@@ -186,18 +187,22 @@ void parseParams()
   for ( uint8_t i = 0; i < server.args(); i++ ) {
     server.arg(i).toCharArray(temp, 100);
     String s = wifi.urldecode(temp);
+    bool bValue = (s == "true" || s == "1") ? true:false;
 //    Serial.println( i + " " + server.argName ( i ) + ": " + s);
  
     switch( server.argName(i).charAt(0)  )
     {
       case 'O': // OLED
-            ee.bEnableOLED = (s == "true") ? true:false;
+          ee.bEnableOLED = bValue;
           break;
       case 'P': // PushBullet
           {
             int which = (tolower(server.argName(i).charAt(1) ) == '1') ? 1:0;
-            ee.bEnablePB[which] = (s == "true") ? true:false;
+            ee.bEnablePB[which] = bValue;
           }
+          break;
+      case 'M': // Motion
+          ee.bMotion = bValue;
           break;
       case 'R': // reset
           doorbellTimeIdx = 0;
@@ -257,6 +262,8 @@ void handleRoot() // Main webpage interface
   page += ee.bEnablePB[0];
   page += ";pb1=";
   page += ee.bEnablePB[1];
+  page += ";bmot=";
+  page += ee.bMotion;
   page += ";function startEvents()"
       "{"
          "eventSource = new EventSource(\"events?i=60&p=1\");"
@@ -283,17 +290,22 @@ void handleRoot() // Main webpage interface
       "function oled(){"
         "oledon=!oledon;"
         "$.post(\"s\", { O: oledon, key: document.all.myKey.value });"
-        "document.all.OLED.value=oledon?'OFF':'ON'"
+        "document.all.OLED.value=oledon?'OFF':'ON '"
       "}"
       "function pbToggle0(){"
         "pb0=!pb0;"
         "$.post(\"s\", { P0: pb0, key: document.all.myKey.value });"
-        "document.all.PB0.value=pb0?'OFF':'ON'"
+        "document.all.PB0.value=pb0?'OFF':'ON '"
       "}"
       "function pbToggle1(){"
         "pb1=!pb1;"
         "$.post(\"s\", { P1: pb1, key: document.all.myKey.value });"
-        "document.all.PB1.value=pb1?'OFF':'ON'"
+        "document.all.PB1.value=pb1?'OFF':'ON '"
+      "}"
+      "function motTog(){"
+        "bmot=!bmot;"
+        "$.post(\"s\", { M: bmot, key: document.all.myKey.value });"
+        "document.all.MOT.value=bmot?'OFF':'ON '"
       "}"
       "setInterval(timer,1000);"
       "t=";
@@ -334,15 +346,18 @@ void handleRoot() // Main webpage interface
 
   page += "<tr><td>Display:</td><td>"
           "<input type=\"button\" value=\"";
-  page += ee.bEnableOLED ? "OFF":"ON";
+  page += ee.bEnableOLED ? "OFF":"ON ";
   page += "\" id=\"OLED\" onClick=\"{oled()}\">"
+          " Mot <input type=\"button\" value=\"";
+  page += ee.bMotion ? "OFF":"ON ";
+  page += "\" id=\"MOT\" onClick=\"{motTog()}\">"
           "</td></tr>"
           "<tr><td>PushBullet:</td><td>"
           "<input type=\"button\" value=\"";
-  page += ee.bEnablePB[0] ? "OFF":"ON";
+  page += ee.bEnablePB[0] ? "OFF":"ON ";
   page += "\" id=\"PB0\" onClick=\"{pbToggle0()}\">"
-          "<input type=\"button\" value=\"";
-  page += ee.bEnablePB[1] ? "OFF":"ON";
+          " Mot <input type=\"button\" value=\"";
+  page += ee.bEnablePB[1] ? "OFF":"ON ";
   page += "\" id=\"PB1\" onClick=\"{pbToggle1()}\">"
           "</td></tr>"
           "<tr><td>Message:</td><td>";
@@ -570,18 +585,18 @@ void motion()
   pirTime = newtime; // latest trigger
 }
 
-volatile bool doorBellTriggered = false;
+volatile bool bDoorBellTriggered = false;
 
 void doorbellISR()
 {
-  doorBellTriggered = true;
+  bDoorBellTriggered = true;
 }
 
-volatile bool pirTriggered = false;
+volatile bool bPirTriggered = false;
 
 void pirISR()
 {
-  pirTriggered = true;
+  bPirTriggered = true;
 }
 
 void setup()
@@ -642,16 +657,21 @@ void loop()
   wuClient1.service();
   wuClient2.service();
 
-  if(pirTriggered)
+  if(bPirTriggered)
   {
-    pirTriggered = false;
+    bPirTriggered = false;
+    if(ee.bEnableOLED == false && displayOnTimer == 0 && doorbellTimeIdx) // motion activated indicator
+    {
+      displayOnTimer = 30;
+      bAutoClear = true;
+    }
     motion();
     bPulseLED = true; // blinks the blue LED
   }
 
-  if(doorBellTriggered)
+  if(bDoorBellTriggered)
   {
-    doorBellTriggered = false;
+    bDoorBellTriggered = false;
     doorBell();
     bPulseLED = true;
   }
@@ -692,7 +712,14 @@ void loop()
     }
 
     if(displayOnTimer) // if alerts or messages, turn the display on
-      displayOnTimer--;
+      if(--displayOnTimer == 0)
+      {
+        if(bAutoClear) // motion activated doorbell rings display
+        {
+          if(ee.bMotion) doorbellTimeIdx = 0;
+          bAutoClear = false;
+        }
+      }
 
     if(nWrongPass)
       nWrongPass--;
@@ -735,7 +762,7 @@ void DrawScreen()
     blnk = !blnk;
   }
 
-  if(ee.bEnableOLED || displayOnTimer || alert_expire)
+  if( (ee.bEnableOLED || displayOnTimer || alert_expire) && (bAutoClear == false)) // skip for motion enabled display
   {
     String s;
 
@@ -932,6 +959,7 @@ const char *jsonList1[] = { "",
   "local_tz_short",
   "local_tz_offset",  // 15     -0400
   "icon",             // 16     name list
+  "error",
   NULL
 };
 
@@ -987,6 +1015,9 @@ void wuCondCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
     case 16:
       iconFromName(psValue);
       break;
+    case 17: // error (like a bad key or url)
+      event.alert(psValue);
+      break;
   }
 }
 
@@ -1013,6 +1044,7 @@ const char *jsonList2[] = { "",
   "description",
   "expires_epoch",
   "message",
+  "error",
   NULL
 };
 
@@ -1065,6 +1097,9 @@ void wuAlertsCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
       Serial.print("alert_message ");
       Serial.println(szAlertMessage);
 */
+      break;
+    case 4: // error
+      event.alert(psValue);
       break;
   }
 }
