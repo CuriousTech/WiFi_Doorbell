@@ -37,7 +37,7 @@ SOFTWARE.
 #include <ESP8266WebServer.h>
 #include <Event.h>  // https://github.com/CuriousTech/ESP8266-HVAC/tree/master/Libraries/Event
 #include <JsonClient.h> // https://github.com/CuriousTech/ESP8266-HVAC/tree/master/Libraries/JsonClient
- 
+
 const char controlPassword[] = "password"; // device password for modifying any settings
 int serverPort = 80; // port to access this device
 
@@ -51,11 +51,11 @@ IPAddress lastIP;
 int nWrongPass;
 
 const char *pIcon = icon12;
+const char *pAlertIcon = pubAnn;
 char szWeatherCond[32] = "NA"; // short description
 char szWind[32] = "NA";        // Wind direction (SSW, NWN...)
-char szAlertType[8];           // Alert type (WRN)
 char szAlertDescription[64];   // Severe Thunderstorm Warning, Dense Fog, etc.
-//char szAlertMessage[4096];    // these are huge
+char szAlertMessage[4096];    // these are huge
 unsigned long alert_expire;   // epoch of alert sell by date
 float TempF;
 int rh;
@@ -140,7 +140,7 @@ const char months[12][4] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep
 void parseParams()
 {
   char temp[100];
-  char password[64];
+  char password[64] = "";
   int val;
   bool bRemote = false;
   bool ipSet = false;
@@ -562,6 +562,7 @@ void motion()
   if(pirTime == 0) // date isn't set yet (the PIR triggers at start anyway)
     return;
 
+//  Serial.println("Motion");
   unsigned long newtime = now() - (3600 * TZ);
 
   if( newtime - pirTime < 30) // limit triggers
@@ -649,7 +650,6 @@ void loop()
   static uint8_t hour_save, sec_save, min_save;
   static uint8_t wuMins = 11;
   static uint8_t wuCall = 0;
-  static uint8_t pirOld = 0;
   static bool bPulseLED = false;
 
   MDNS.update();
@@ -751,14 +751,32 @@ void DrawScreen()
 {
   static int16_t ind;
   static bool blnk = false;
-  static long last;
- 
+  static long last_blnk;
+  static long last_min;
+  static int16_t iconX = 0;
+  static int16_t infoX = 64;
+
+  if(minute() != last_min) // alternate static images
+  {
+    last_min = minute();
+    if(iconX)
+    {
+      iconX = 0;
+      infoX = 64;
+    }
+    else
+    {
+      iconX = 64;
+      infoX = 0;
+    }
+  }
+  
   // draw the screen here
   display.clear();
 
-  if( (millis() - last) > 400) // 400ms toggle for blinky things
+  if( (millis() - last_blnk) > 400) // 400ms toggle for blinky things
   {
-    last = millis();
+    last_blnk = millis();
     blnk = !blnk;
   }
 
@@ -766,14 +784,14 @@ void DrawScreen()
   {
     String s;
 
-    if(alert_expire) // if theres an alert message
+    if(alert_expire) // if there's an alert message
     {
       sMessage = szAlertDescription; // set the scroller message
-      if(blnk) display.drawXbm(0,20, 44, 42, pIcon);
+      if(blnk) display.drawXbm(iconX+10, 20, 44, 42, pAlertIcon);
     }
     else
     {
-      display.drawXbm(0,20, 44, 42, pIcon);
+      display.drawXbm(iconX+10, 20, 44, 42, pIcon);
     }
   
     if(sMessage.length()) // message sent over wifi or alert
@@ -797,18 +815,18 @@ void DrawScreen()
     }
     Scroller(s);
 
-    display.drawPropString(60, 23, String(TempF, 1) + "]" );
-    display.drawString(80, 42, String(rh) + "%");
+    display.drawPropString(infoX, 23, String(TempF, 1) + "]" );
+    display.drawString(infoX + 20, 43, String(rh) + "%");
     if(blnk && doorbellTimeIdx) // blink small gauge if doorbell logged
-    { // up to 64 pixels (128x64 with 44 for icon+space = 82 left)
-      display.fillRect(46, 61, doorbellTimeIdx << 2, 3);
+    { // up to 64 pixels (128x64)
+      display.fillRect(infoX, 61, doorbellTimeIdx << 2, 3);
     }
   }
   else if(doorbellTimeIdx) // blink a bell if doorbell logged and display is off
   {
     display.drawPropString(0, 0, timeToTxt(doorbellTimes[0]) ); // the first time
-    if(blnk) display.drawXbm(0,20, 44, 42, bell);
-    display.drawPropString(60, 23, String(doorbellTimeIdx) ); // count
+    if(blnk) display.drawXbm(iconX+10, 20, 44, 42, bell);
+    display.drawPropString(infoX, 23, String(doorbellTimeIdx) ); // count
   }
   display.display();
 }
@@ -849,95 +867,59 @@ void Scroller(String s)
 
 void iconFromName(char *pName)
 {
-  const char *iconNames[] = {
-    "chanceflurries", // 0
-    "chancerain",
-    "chancesleet",
-    "chancesnow",
-    "chancetstorms",
-    "clear", // 5
-    "cloudy",
-    "flurries",
-    "fog",
-    "hazy",
-    "mostlycloudy", // 10
-    "mostlysunny",
-    "partlycloudy",
-    "partlysunny",
-    "rain",
-    "sleet", // 15
-    "snow",
-    "sunny",
-    "tstorms",
-
-    "nt_chanceflurries",
-    "nt_chancerain", // 20
-    "nt_chancesleet",
-    "nt_chancesnow",
-    "nt_chancetstorms",
-    "nt_clear", // 24
-    "nt_cloudy", // 25
-    "nt_flurries",
-    "nt_fog",
-    "nt_hazy",
-    "nt_mostlycloudy",
-    "nt_mostlysunny", //30
-    "nt_partlycloudy",
-    "nt_partlysunny",
-    "nt_rain",
-    "nt_sleet",
-    "nt_snow",
-    "nt_sunny",
-    "nt_tstorms",
-    NULL
-  };
-
-  int nIcon;
-  for(nIcon = 0; iconNames[nIcon]; nIcon++)
-    if(!strcmp(pName, iconNames[nIcon]))
-      break;
-
-  switch(nIcon) // row column from image at http://www.alessioatzeni.com/meteocons/
+  struct cond2icon
   {
-    case 0:   pIcon = icon72; break; // I have no idea if these are right
-    case 1:   pIcon = icon64; break;
-    case 2:   pIcon = icon44; break;
-    case 3:   pIcon = icon43; break;
-    case 4:   pIcon = icon34; break;
-    case 5:   pIcon = icon54; break;
-    case 6:   pIcon = icon75; break;
-    case 7:   pIcon = icon73; break;
-    case 8:   pIcon = icon31; break;
-    case 9:   pIcon = icon11; break;
-    case 10:  pIcon = icon62; break;
-    case 11:  pIcon = icon56; break;
-    case 12:  pIcon = icon22; break;
-    case 13:  pIcon = icon56; break;
-    case 14:  pIcon = icon65; break;
-    case 15:  pIcon = icon73; break;
-    case 16:  pIcon = icon74; break;
-    case 17:  pIcon = icon54; break;
-    case 18:  pIcon = icon53; break;
-    case 19:  pIcon = icon45; break;
-    case 20:  pIcon = icon35; break;
-    case 21:  pIcon = icon42; break;
-    case 22:  pIcon = icon44; break;
-    case 23:  pIcon = icon33; break;
-    case 24:  pIcon = icon13; break;
-    case 25:  pIcon = icon32; break;
-    case 26:  pIcon = icon45; break;
-    case 27:  pIcon = icon26; break;
-    case 28:  pIcon = icon25; break;
-    case 29:  pIcon = icon32; break;
-    case 30:  pIcon = icon14; break;
-    case 31:  pIcon = icon23; break;
-    case 32:  pIcon = icon23; break;
-    case 33:  pIcon = icon22; break;
-    case 34:  pIcon = icon36; break;
-    case 35:  pIcon = icon46; break;
-    case 36:  pIcon = icon56; break;
-    case 37:  pIcon = icon34; break;
-  }
+    const char *pName;
+    const char *pIcon;
+  };
+  cond2icon data[] = { // row column from image at http://www.alessioatzeni.com/meteocons/
+    {"chanceflurries", icon72},// 0
+    {"chancerain", icon64},
+    {"chancesleet", icon44},
+    {"chancesnow", icon43},
+    {"chancetstorms", icon34},
+    {"clear",  icon54},// 5
+    {"cloudy", icon75},
+    {"flurries", icon73},
+    {"fog", icon31},
+    {"hazy", icon26},
+    {"mostlycloudy", icon62},// 10
+    {"mostlysunny", icon11},
+    {"partlycloudy", icon22},
+    {"partlysunny", icon56},
+    {"rain", icon65},
+    {"sleet", icon73},
+    {"snow", icon74},
+    {"sunny", icon54},
+    {"tstorms", icon53},
+
+    {"nt_chanceflurries", icon45},
+    {"nt_chancerain", icon35},
+    {"nt_chancesleet", icon42},
+    {"nt_chancesnow", icon44},
+    {"nt_chancetstorms", icon33},
+    {"nt_clear", icon13},
+    {"nt_cloudy", icon32},
+    {"nt_flurries", icon45},
+    {"nt_fog", icon26},
+    {"nt_hazy", icon25},
+    {"nt_mostlycloudy", icon32},
+    {"nt_mostlysunny", icon14},
+    {"nt_partlycloudy", icon23},
+    {"nt_partlysunny", icon23},
+    {"nt_rain", icon22},
+    {"nt_sleet", icon36},
+    {"nt_snow", icon46},
+    {"nt_sunny", icon56},
+    {"nt_tstorms", icon34},
+    {NULL, NULL}
+  };
+  for(int i = 0; data[i].pName; i++)
+    if(!strcmp(pName, data[i].pName))
+    {
+      pIcon = data[i].pIcon;
+      break;
+    }
 }
 
 // things we want from conditions request
@@ -966,6 +948,9 @@ const char *jsonList1[] = { "",
 void wuCondCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
 {
   static unsigned long epoch;
+
+  if(iEvent == -1) // connection events
+    return;
 
   switch(iName)
   {
@@ -1050,32 +1035,26 @@ const char *jsonList2[] = { "",
 
 void wuAlertsCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
 {
+  if(iEvent == -1) // connection events
+    return;
+
   switch(iName)
   {
     case 0: // type (3 letter)
-      strncpy(szAlertType, psValue, sizeof(szAlertType));
-//      Serial.print("alert type ");
-//      Serial.println(szAlertType);
+      alertIcon(psValue);
       break;
     case 1: // description
       strncpy(szAlertDescription, psValue, sizeof(szAlertDescription) );
       strcat(szAlertDescription, "  "); // separate end and start on scroller
 //      Serial.print("alert_desc ");
 //      Serial.println(szAlertDescription);
-      if(szAlertDescription[0] && alert_expire == 0) // should only happen on first instance
-      {
-        event.alert(szAlertDescription);
-      }
       break;
     case 2: // expires
       alert_expire = iValue;
       alert_expire += (3600 * TZ );
-
-//      Serial.print("alert_expires ");
-//      Serial.println(alert_expire);
       break;
-    case 3: // message (too long to read)
-/*    {
+    case 3: // message (too long to watch on the scroller)
+    {
         int i;
         for(i = 0; i < sizeof(szAlertMessage)-1; i++)
         {
@@ -1093,10 +1072,11 @@ void wuAlertsCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
         szAlertMessage[i++] = ' '; // space
         szAlertMessage[i] = 0; //null term
       }
+      event.alert(szAlertMessage);
 
-      Serial.print("alert_message ");
-      Serial.println(szAlertMessage);
-*/
+//    Serial.print("alert_message ");
+//    Serial.println(szAlertMessage);
+
       break;
     case 4: // error
       event.alert(psValue);
@@ -1134,6 +1114,46 @@ void eeWrite() // write the settings if changed
   wifi.eeWriteData(64, (uint8_t*)&ee, sizeof(ee)); // WiFiManager already has an instance open, so use that at offset 64+
 }
 
+void alertIcon(char *p)
+{
+  struct alert2icon
+  {
+    const char name[4];
+    const char *pIcon;
+  };
+  alert2icon data[] = {
+    {"HUR", tornado}, //Hurricane Local Statement
+    {"TOR", tornado}, //Tornado Warning
+    {"TOW", tornado}, //Tornado Watch
+    {"WRN", icon53},  //Severe Thunderstorm Warning
+    {"SEW", icon53},  //Severe Thunderstorm Watch
+    {"WIN", icon41},  //Winter Weather Advisory
+    {"FLO", icon65},  //Flood Warning
+    {"WAT", icon65},  //Flood Watch / Statement
+    {"WND", icon16},  //High Wind Advisory
+    {"SVR", pubAnn},  //Severe Weather Statement
+    {"HEA", icon54},  //Heat Advisory
+    {"FOG", icon26},  //Dense Fog Advisory
+    {"SPE", pubAnn},  //Special Weather Statement
+    {"FIR", icon11},  //xFire Weather Advisory
+    {"VOL", icon11},  //xVolcanic Activity Statement
+    {"HWW", tornado}, //Hurricane Wind Warning
+    {"REC", icon11},  //xRecord Set
+    {"REP", pubAnn},  //Public Reports
+    {"PUB", pubAnn},  //Public Information Statement
+    {"", 0}
+  };
+
+  for(int i = 0; data[i].name[0]; i++)
+  {
+    if(!strcmp(p, data[i].name))
+    {
+      pAlertIcon = data[i].pIcon;
+      break;
+    }
+  }
+}
+
 void eeRead()
 {
   eeSet eeTest;
@@ -1168,15 +1188,12 @@ void pushBullet(const char *pTitle, String sBody)
   const char host[] = "api.pushbullet.com";
   const char url[] = "/v2/pushes";
 
-  Serial.println("pb");
-
   if (!client.connect(host, 443))
   {
     event.print("PushBullet connection failed");
     return;
   }
 
-  Serial.println("conn");
   // Todo: The key should be verified here
 
   String data = "{\"type\": \"note\", \"title\": \"";
@@ -1194,7 +1211,6 @@ void pushBullet(const char *pTitle, String sBody)
               "Connection: close\r\n\r\n" +
               data + "\r\n\r\n");
  
-  Serial.println("sent");
   int i = 0;
   while (client.connected() && ++i < 10)
   {
