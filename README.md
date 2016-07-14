@@ -2,7 +2,7 @@
 
 This is an ESP07 based doorbell notifier.  
 
-The 3 terminals connect to the existing 12~24VAC transformer used to power the bell solenoids and light the neon bulb in the button.  
+The 3 terminals connect to the existing 12~24VAC (up to 40V with r1) transformer used to power the bell solenoids and light the neon bulb in the button.  
 
 Btn-DB connects to the wire comming from the button and connects to the bell.<br/>
 Btn-TF is the one with a wire cap between the transformer and button.  <br/>
@@ -14,7 +14,12 @@ The rest of the code is primarily OLED and wunderground for forcast and weather 
 
 There's also analog and a few more raw I/O pins broken out for more sensors or controls.  The regulator is 400mA max so it has a bit of room for expansion.  I added a small PIR sensor.  It's supposed to be 5V, but there was a diode and 3V3 regulator that was removed to get it to work with this.  
 
+Note: This is rev 0.  It gets up to 130F.  Scroll down for rev 1.   
 ![esp07doorbell](http://www.curioustech.net/images/doorbell.jpg)  
 
-The web page.  This still needs some improvements with the pushes.  
+The web page.  
 ![doorbellweb](http://www.curioustech.net/images/doorbellweb.png)  
+
+Rev 1.  Temperature is 92F after 30 mins.  
+
+![doorbellr1](http://www.curioustech.net/images/doorbellr1.jpg)  
