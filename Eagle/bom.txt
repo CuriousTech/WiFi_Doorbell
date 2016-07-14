@@ -1,0 +1,21 @@
+The supply is based loosely on the Vreg datasheet suggestion:
+Vreg           LMR16006YQ3DDCRQ1
+D5  SOT-223    NSVR0320MW2T1G
+L1  0805 6.8u  IFSC0806AZER6R8M01
+C1  0805 10uF  08056C106KAT2A
+C8  1206 2K2   Had an 0805 X6R so used it.
+C6  0805 0.1u  Generic X6R 10V
+C7  0805 0.1u  10V 
+C3  0805 0.1u  25V 
+OK1            VOS615A-3T
+D1-D4 SOD-123  Schotkey rectifier (500mA+)
+C5 8mm dia SMD or throughhole.  Largest that fits, over 100u 24V.
+
+R5,R6  0805   Optional pullups for i2c, etc.
+R7,R8  0805   Optional for analog voltage divider
+
+R1-R3 0805 10K The pullups required for EPS8266 normal operation.
+
+X1  3.5mm 3 pin
+
+Other: 0.1" headers, button, ESP-07
