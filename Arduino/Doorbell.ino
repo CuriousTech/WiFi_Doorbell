@@ -21,10 +21,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-// Build with Arduino IDE 1.6.9, esp8266 SDK 2.2.0
+// Build with Arduino IDE 1.6.9, esp8266 SDK 2.2.0 or 2.3.0
 
 #include <Wire.h>
-#include "icons.h"
+#include "icons.h" // if errors for icons, remove the one in the library (or rename)
 #include <DHT.h> // http://www.github.com/markruys/arduino-DHT
 #include <TimeLib.h> // http://www.pjrc.com/teensy/td_libs_Time.html
 #include <ssd1306_i2c.h>  // https://github.com/CuriousTech/WiFi_Doorbell/Libraries/ssd1306_i2c
@@ -127,12 +127,15 @@ String dataJson() // timed/instant pushed data
 }
 
 eventHandler event(dataJson);
+
 void wuCondCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
 JsonClient wuClient1(wuCondCallback);
 void wuConditions(void);
 void wuAlertsCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
 JsonClient wuClient2(wuAlertsCallback);
 void wuAlerts(void);
+
+void pushBullet(const char *pTitle, String sBody);
 
 const char days[7][4] = {"Sun","Mon","Tue","Wed","Thr","Fri","Sat"};
 const char months[12][4] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
@@ -312,17 +315,23 @@ void handleRoot() // Main webpage interface
   page += now() - (3600 * TZ); // set to GMT
   page +="000;function timer(){" // add 000 for ms
           "t+=1000;d=new Date(t);"
-          "document.all.time.innerHTML=d.toLocaleTimeString()}"
-          "</script>"
+          "document.all.time.innerHTML=d.toLocaleTimeString()}";
 
+    if(szAlertMessage) // onload alert
+    {
+      page += "alert(\"";
+      page += szAlertMessage;
+      page += "\");";
+    }
+ page += "</script>"
       "<body onload=\"{"
       "key=localStorage.getItem('key');if(key!=null) document.getElementById('myKey').value=key;"
       "for(i=0;i<document.forms.length;i++) document.forms[i].elements['key'].value=key;"
-      "startEvents();}\">";
+      "startEvents();}\">"
 
-  page += "<div><h3 align=\"center\">WiFi Doorbell</h3>"
-          "<table align=\"center\">"
-          "<tr><td><p id=\"time\">";
+      "<div><h3 align=\"center\">WiFi Doorbell</h3>"
+      "<table align=\"center\">"
+      "<tr><td><p id=\"time\">";
   page += timeFmt();
   page += "</p></td><td></td></tr>"
            "<tr><td colspan=2>Doorbell Rings: <input type=\"button\" value=\"Clear\" id=\"resetBtn\" onClick=\"{reset()}\">"
@@ -574,7 +583,7 @@ void motion()
   pirStamp.s = second();
   pirStamp.a = isPM();
 
-  event.alert("Motion "  + timeToTxt( pirStamp ) );
+  event.alert("Motion " + timeToTxt( pirStamp ) );
   event.push();
   // make sure it's more than 5 mins between triggers to send a PB
   if( newtime - pirTime > 5 * 60)
@@ -582,7 +591,7 @@ void motion()
     if(ee.bEnablePB[1])
       pushBullet("Doorbell", "Motion at " + timeToTxt( pirStamp) );
   }
-
+ 
   pirTime = newtime; // latest trigger
 }
 
@@ -684,12 +693,28 @@ void loop()
     {
       min_save = minute();
 
+      static int8_t condCnt = 6;
+      bool bGetCond = false;
+
       if(ee.location[0] && --wuMins == 0) // call wunderground API
       {
         switch(++wuCall) // put a list of wu callers here
         {
           case 0:
-            if(ee.bEnableOLED)
+            if(ee.bEnableOLED == false)
+            {
+              if(--condCnt == 0) // get conditions and time every hour when display is off
+              {
+                bGetCond = true;
+                condCnt = 6;
+              }
+            }
+            else
+            {
+              bGetCond = true;
+            }
+
+            if(bGetCond)
             {
               wuConditions();
               break;
@@ -725,9 +750,7 @@ void loop()
       nWrongPass--;
 
     if(alert_expire && alert_expire < now()) // if active alert
-    {
       alert_expire = 0;
-    }
 
     if(bPulseLED)
     {
@@ -797,6 +820,9 @@ void DrawScreen()
     if(sMessage.length()) // message sent over wifi or alert
     {
       s = sMessage;
+      s += timeFmt(); // display current time too
+      s += "  ";
+
       if(msgCnt == 0) // starting
         msgCnt = 3; // times to repeat message
     }
@@ -856,10 +882,12 @@ void Scroller(String s)
     if(++ind >= len) // reset at last char
     {
       ind = 0;
-      if(msgCnt) // end of custom message display
+      if(msgCnt && alert_expire == 0) // end of custom message display
       {
         if(--msgCnt == 0) // decrement times to repeat it
-            sMessage = "";
+        {
+          sMessage = "";
+        }
       }
     }
   }
@@ -1029,6 +1057,8 @@ const char *jsonList2[] = { "",
   "description",
   "expires_epoch",
   "message",
+  "phenomena", // 5  //: "HT",
+  "significance", //: "Y",
   "error",
   NULL
 };
@@ -1036,7 +1066,11 @@ const char *jsonList2[] = { "",
 void wuAlertsCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
 {
   if(iEvent == -1) // connection events
+  {
+    if(iName == JC_CONNECTED)
+      alert_expire = 0; // clear last.  Alerts can cancel before expire time
     return;
+  }
 
   switch(iName)
   {
@@ -1056,7 +1090,7 @@ void wuAlertsCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
     case 3: // message (too long to watch on the scroller)
     {
         int i;
-        for(i = 0; i < sizeof(szAlertMessage)-1; i++)
+        for(i = 0; i < sizeof(szAlertMessage)-2; i++)
         {
           if(*psValue == '\\')
           {
@@ -1078,7 +1112,7 @@ void wuAlertsCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
 //    Serial.println(szAlertMessage);
 
       break;
-    case 4: // error
+    case 6: // error
       event.alert(psValue);
       break;
   }
@@ -1129,7 +1163,7 @@ void alertIcon(char *p)
     {"SEW", icon53},  //Severe Thunderstorm Watch
     {"WIN", icon41},  //Winter Weather Advisory
     {"FLO", icon65},  //Flood Warning
-    {"WAT", icon65},  //Flood Watch / Statement
+    {"WAT", iconEye},  //Flood Watch / Statement
     {"WND", icon16},  //High Wind Advisory
     {"SVR", pubAnn},  //Severe Weather Statement
     {"HEA", icon54},  //Heat Advisory
