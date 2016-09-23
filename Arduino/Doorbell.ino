@@ -21,22 +21,21 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-// Build with Arduino IDE 1.6.9, esp8266 SDK 2.2.0 or 2.3.0
+// Build with Arduino IDE 1.6.11, esp8266 SDK >2.3.0 (git repo 9/20/2016+)
 
 #include <Wire.h>
-#include "icons.h" // if errors for icons, remove the one in the library (or rename)
+#include "icons.h"
 #include <DHT.h> // http://www.github.com/markruys/arduino-DHT
 #include <TimeLib.h> // http://www.pjrc.com/teensy/td_libs_Time.html
 #include <ssd1306_i2c.h>  // https://github.com/CuriousTech/WiFi_Doorbell/Libraries/ssd1306_i2c
 
-#include <WiFiClient.h>
-#include <WiFiClientSecure.h>
 #include <EEPROM.h>
 #include <ESP8266mDNS.h>
 #include "WiFiManager.h"
-#include <ESP8266WebServer.h>
-#include <Event.h>  // https://github.com/CuriousTech/ESP8266-HVAC/tree/master/Libraries/Event
+#include <ESPAsyncWebServer.h> // https://github.com/me-no-dev/ESPAsyncWebServer
+
 #include <JsonClient.h> // https://github.com/CuriousTech/ESP8266-HVAC/tree/master/Libraries/JsonClient
+#include "PushBullet.h"
 
 const char controlPassword[] = "password"; // device password for modifying any settings
 int serverPort = 80; // port to access this device
@@ -50,12 +49,11 @@ int serverPort = 80; // port to access this device
 IPAddress lastIP;
 int nWrongPass;
 
-const char *pIcon = icon12;
+const char *pIcon = icon11;
 const char *pAlertIcon = pubAnn;
 char szWeatherCond[32] = "NA"; // short description
 char szWind[32] = "NA";        // Wind direction (SSW, NWN...)
 char szAlertDescription[64];   // Severe Thunderstorm Warning, Dense Fog, etc.
-char szAlertMessage[4096];    // these are huge
 unsigned long alert_expire;   // epoch of alert sell by date
 float TempF;
 int rh;
@@ -79,7 +77,10 @@ int displayOnTimer;             // temporary OLED turn-on
 String sMessage;
 
 WiFiManager wifi(0);  // AP page:  192.168.4.1
-ESP8266WebServer server( serverPort );
+AsyncWebServer server( serverPort );
+AsyncEventSource events("/events"); // event source (Server-Sent events)
+
+PushBullet pb;
 
 int httpPort = 80; // may be modified by open AP scan
 
@@ -107,9 +108,12 @@ eeSet ee = { sizeof(eeSet), 0xAAAA,
 
 String dataJson() // timed/instant pushed data
 {
-    String s = "{\"weather\": \"";
-    s += szWeatherCond;
-    s += "\",\"pir\": \"";
+  String s = "{";
+  s += "\"t\": ";
+  s += now() - (TZ * 3600);
+  s +=",\"weather\": \"";
+  s += szWeatherCond;
+  s += "\",\"pir\": \"";
     s += timeToTxt(pirStamp);
     s += "\",\"bellCount\": ";
     s += doorbellTimeIdx;
@@ -126,8 +130,6 @@ String dataJson() // timed/instant pushed data
     return s;
 }
 
-eventHandler event(dataJson);
-
 void wuCondCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
 JsonClient wuClient1(wuCondCallback);
 void wuConditions(void);
@@ -135,12 +137,10 @@ void wuAlertsCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
 JsonClient wuClient2(wuAlertsCallback);
 void wuAlerts(void);
 
-void pushBullet(const char *pTitle, String sBody);
-
 const char days[7][4] = {"Sun","Mon","Tue","Wed","Thr","Fri","Sat"};
 const char months[12][4] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
 
-void parseParams()
+void parseParams(AsyncWebServerRequest *request)
 {
   char temp[100];
   char password[64] = "";
@@ -150,14 +150,16 @@ void parseParams()
 
 //  Serial.println("parseArgs");
 
-  if(server.args() == 0)
+  if(request->params() == 0)
     return;
 
   // get password first
-  for ( uint8_t i = 0; i < server.args(); i++ ) {
-    server.arg(i).toCharArray(temp, 100);
+  for ( uint8_t i = 0; i < request->params(); i++ ) {
+    AsyncWebParameter* p = request->getParam(i);
+
+    p->value().toCharArray(temp, 100);
     String s = wifi.urldecode(temp);
-    switch( server.argName(i).charAt(0)  )
+    switch( p->name().charAt(0)  )
     {
       case 'k': // key
         s.toCharArray(password, sizeof(password));
@@ -165,7 +167,7 @@ void parseParams()
     }
   }
 
-  IPAddress ip = server.client().remoteIP();
+  uint32_t ip = request->client()->localIP();
 
   if(strcmp(controlPassword, password))
   {
@@ -176,31 +178,32 @@ void parseParams()
     if(ip != lastIP)  // if different IP drop it down
        nWrongPass = 10;
     String data = "{\"ip\":\"";
-    data += ip.toString();
+    data += request->client()->localIP().toString();
     data += "\",\"pass\":\"";
     data += password; // a String object here adds a NULL.  Possible bug in SDK
     data += "\"}";
-    event.push("hack", data); // log attempts
+    events.send(data.c_str(), "hack" ); // log attempts
     lastIP = ip;
     return;
   }
 
   lastIP = ip;
 
-  for ( uint8_t i = 0; i < server.args(); i++ ) {
-    server.arg(i).toCharArray(temp, 100);
+  for ( uint8_t i = 0; i < request->params(); i++ ) {
+    AsyncWebParameter* p = request->getParam(i);
+    p->value().toCharArray(temp, 100);
     String s = wifi.urldecode(temp);
     bool bValue = (s == "true" || s == "1") ? true:false;
 //    Serial.println( i + " " + server.argName ( i ) + ": " + s);
  
-    switch( server.argName(i).charAt(0)  )
+    switch( p->name().charAt(0) )
     {
       case 'O': // OLED
           ee.bEnableOLED = bValue;
           break;
       case 'P': // PushBullet
           {
-            int which = (tolower(server.argName(i).charAt(1) ) == '1') ? 1:0;
+            int which = (tolower(p->name().charAt(1) ) == '1') ? 1:0;
             ee.bEnablePB[which] = bValue;
           }
           break;
@@ -208,14 +211,17 @@ void parseParams()
           ee.bMotion = bValue;
           break;
       case 'R': // reset
-          doorbellTimeIdx = 0;
+          if(doorbellTimeIdx)
+            doorbellTimeIdx = 0;
+          else
+            alert_expire = 0; // clear the alert
           break;
       case 'L': // location
           s.toCharArray(ee.location, sizeof(ee.location));
           break;
       case 'm':  // message
           alert_expire = 0; // also clears the alert
-          sMessage = server.arg(i);
+          sMessage = p->value();
           if(ee.bEnableOLED == false && sMessage.length())
           {
             displayOnTimer = 60;
@@ -234,108 +240,116 @@ void parseParams()
   }
 }
 
-void handleRoot() // Main webpage interface
+void onBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
+  //Handle body
+}
+
+void onUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final){
+  //Handle upload
+}
+
+const char part1[] PROGMEM = "<!DOCTYPE html>\n"
+      "<html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>\n"
+      "<title>WiFi Doorbell</title>\n"
+      "<style type=\"text/css\">\n"
+      "div,table,input{\n"
+      "border-radius: 5px;\n"
+      "margin-bottom: 5px;\n"
+      "box-shadow: 2px 2px 12px #000000;\n"
+      "background-image: -moz-linear-gradient(top, #ffffff, #50a0ff);\n"
+      "background-image: -ms-linear-gradient(top, #ffffff, #50a0ff);\n"
+      "background-image: -o-linear-gradient(top, #ffffff, #50a0ff);\n"
+      "background-image: -webkit-linear-gradient(top, #efffff, #50a0ff);"
+      "background-image: linear-gradient(top, #ffffff, #50a0ff);\n"
+      "background-clip: padding-box;\n"
+      "}\n"
+      "body{width:240px;display:block;margin-left:auto;margin-right:auto;text-align:right;font-family: Arial, Helvetica, sans-serif;}}\n"
+      "</style>\n"
+
+      "<script src=\"http://ajax.googleapis.com/ajax/libs/jquery/1.3.2/jquery.min.js\" type=\"text/javascript\" charset=\"utf-8\"></script>\n"
+      "<script type=\"text/javascript\">\n"
+      "a=document.all\n"
+      "oledon=";
+
+const char part2[] PROGMEM = "\nfunction startEvents(){\n"
+         "eventSource = new EventSource(\"events\")\n"
+         "eventSource.addEventListener('open', function(e){},false)\n"
+         "eventSource.addEventListener('error', function(e){},false)\n"
+         "eventSource.addEventListener('alert', function(e){alert(e.data)},false)\n"
+         "eventSource.addEventListener('state',function(e){\n"
+           "d=JSON.parse(e.data)\n"
+           "a.mot.innerHTML=d.pir\n"
+           "dt=new Date(d.t*1000)\n"
+           "a.time.innerHTML=dt.toLocaleTimeString()\n"
+           "for(i=0;i<";
+
+const char part3[] PROGMEM = ";i++){\n"
+            "item=eval('document.all.t'+i);tm1=eval('d.t'+i)\n"
+            "item.innerHTML=tm1\n"
+            "item=eval('document.all.r'+i)\n"
+            "item.setAttribute('style',tm1.length?'':'display:none')\n"
+           "}\n"
+         "},false)\n"
+      "}\n"
+      "function reset(){\n"
+        "$.post(\"s\", { R: 0, key: a.myKey.value })\n"
+        "location.reload()\n"
+      "}\n"
+      "function oled(){\n"
+        "oledon=!oledon\n"
+        "$.post(\"s\", { O: oledon, key: a.myKey.value })\n"
+        "a.OLED.value=oledon?'OFF':'ON '\n"
+      "}\n"
+      "function pbToggle0(){\n"
+        "pb0=!pb0\n"
+        "$.post(\"s\", { P0: pb0, key: a.myKey.value })\n"
+        "a.PB0.value=pb0?'OFF':'ON '\n"
+      "}\n"
+      "function pbToggle1(){\n"
+        "pb1=!pb1\n"
+        "$.post(\"s\", { P1: pb1, key: a.myKey.value })\n"
+        "a.PB1.value=pb1?'OFF':'ON '\n"
+      "}"
+      "function motTog(){\n"
+        "bmot=!bmot\n"
+        "$.post(\"s\", { M: bmot, key: a.myKey.value })\n"
+        "a.MOT.value=bmot?'OFF':'ON '\n"
+      "}\n"
+      "</script>\n"
+      "<body onload=\"{\n"
+      "key=localStorage.getItem('key')\nif(key!=null) document.getElementById('myKey').value=key\n"
+      "for(i=0;i<document.forms.length;i++) document.forms[i].elements['key'].value=key\n"
+      "startEvents()\n}\">\n"
+
+      "<div><h3 align=\"center\">WiFi Doorbell</h3>\n"
+      "<table align=\"center\">\n"
+      "<tr><td><p id=\"time\">"
+      "</p></td><td></td></tr>\n"
+      "<tr><td colspan=2>Doorbell Rings: <input type=\"button\" value=\"Clear\" id=\"resetBtn\" onClick=\"{reset()}\">"
+      "</td></tr>\n";
+
+void handleRoot(AsyncWebServerRequest *request) // Main webpage interface
 {
   Serial.println("handleRoot");
 
-  parseParams();
+  parseParams(request);
 
-  String page = "<!DOCTYPE html><html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>"
-      "<title>WiFi Doorbell</title>"
-      "<style type=\"text/css\">"
-      "div,table,input{"
-      "border-radius: 5px;"
-      "margin-bottom: 5px;"
-      "box-shadow: 2px 2px 12px #000000;"
-      "background-image: -moz-linear-gradient(top, #ffffff, #50a0ff);"
-      "background-image: -ms-linear-gradient(top, #ffffff, #50a0ff);"
-      "background-image: -o-linear-gradient(top, #ffffff, #50a0ff);"
-      "background-image: -webkit-linear-gradient(top, #efffff, #50a0ff);"
-      "background-image: linear-gradient(top, #ffffff, #50a0ff);"
-      "background-clip: padding-box;"
-      "}"
-      "body{width:240px;font-family: Arial, Helvetica, sans-serif;}"
-      "</style>"
+  AsyncResponseStream *response = request->beginResponseStream("text/html");
 
-      "<script src=\"http://ajax.googleapis.com/ajax/libs/jquery/1.3.2/jquery.min.js\" type=\"text/javascript\" charset=\"utf-8\"></script>"
-      "<script type=\"text/javascript\">"
-      "oledon=";
+  response->print(String(part1));
+  String page = "";
   page += ee.bEnableOLED;
-  page += ";pb0=";
+  page += "\npb0=";
   page += ee.bEnablePB[0];
-  page += ";pb1=";
+  page += "\npb1=";
   page += ee.bEnablePB[1];
-  page += ";bmot=";
+  page += "\nbmot=";
   page += ee.bMotion;
-  page += ";function startEvents()"
-      "{"
-         "eventSource = new EventSource(\"events?i=60&p=1\");"
-         "eventSource.addEventListener('open', function(e){},false);"
-         "eventSource.addEventListener('error', function(e){},false);"
-         "eventSource.addEventListener('alert', function(e){alert(e.data)},false);"
-         "eventSource.addEventListener('state',function(e){"
-           "d=JSON.parse(e.data);"
-           "document.all.mot.innerHTML=d.pir;"
-           "for(i=0;i<";
-           page += DB_CNT;
-           page += ";i++){"
-            "item=eval('document.all.t'+i);tm1=eval('d.t'+i);"
-            "item.innerHTML=tm1;"
-            "item=eval('document.all.r'+i);"
-            "item.setAttribute('style',tm1.length?'':'display:none')"
-           "}"
-         "},false);"
-      "}"
-      "function reset(){"
-        "$.post(\"s\", { R: 0, key: document.all.myKey.value });"
-        "location.reload();"
-      "}"
-      "function oled(){"
-        "oledon=!oledon;"
-        "$.post(\"s\", { O: oledon, key: document.all.myKey.value });"
-        "document.all.OLED.value=oledon?'OFF':'ON '"
-      "}"
-      "function pbToggle0(){"
-        "pb0=!pb0;"
-        "$.post(\"s\", { P0: pb0, key: document.all.myKey.value });"
-        "document.all.PB0.value=pb0?'OFF':'ON '"
-      "}"
-      "function pbToggle1(){"
-        "pb1=!pb1;"
-        "$.post(\"s\", { P1: pb1, key: document.all.myKey.value });"
-        "document.all.PB1.value=pb1?'OFF':'ON '"
-      "}"
-      "function motTog(){"
-        "bmot=!bmot;"
-        "$.post(\"s\", { M: bmot, key: document.all.myKey.value });"
-        "document.all.MOT.value=bmot?'OFF':'ON '"
-      "}"
-      "setInterval(timer,1000);"
-      "t=";
-  page += now() - (3600 * TZ); // set to GMT
-  page +="000;function timer(){" // add 000 for ms
-          "t+=1000;d=new Date(t);"
-          "document.all.time.innerHTML=d.toLocaleTimeString()}";
-
-    if(szAlertMessage) // onload alert
-    {
-      page += "alert(\"";
-      page += szAlertMessage;
-      page += "\");";
-    }
- page += "</script>"
-      "<body onload=\"{"
-      "key=localStorage.getItem('key');if(key!=null) document.getElementById('myKey').value=key;"
-      "for(i=0;i<document.forms.length;i++) document.forms[i].elements['key'].value=key;"
-      "startEvents();}\">"
-
-      "<div><h3 align=\"center\">WiFi Doorbell</h3>"
-      "<table align=\"center\">"
-      "<tr><td><p id=\"time\">";
-  page += timeFmt();
-  page += "</p></td><td></td></tr>"
-           "<tr><td colspan=2>Doorbell Rings: <input type=\"button\" value=\"Clear\" id=\"resetBtn\" onClick=\"{reset()}\">"
-           "</td></tr>";
+  response->print(page);
+  response->print(String(part2));
+  response->print(String(DB_CNT));
+  response->print(String(part3));
+  page = "";
   for(int i = 0; i < DB_CNT; i++)
   {
     page += "<tr id=r";
@@ -346,12 +360,11 @@ void handleRoot() // Main webpage interface
     page += i;
     page += "\"";
     page += ">";
-    page += timeToTxt(doorbellTimes[i]);
-    page += "</div></td></tr>";
+    page += "</div></td></tr>\n";
   }
   page += "<tr><td>Motion:</td><td><div id=\"mot\">";
   page += timeToTxt(pirStamp);
-  page += "</div></td></tr>";
+  page += "</div></td></tr>\n";
 
   page += "<tr><td>Display:</td><td>"
           "<input type=\"button\" value=\"";
@@ -360,7 +373,7 @@ void handleRoot() // Main webpage interface
           " Mot <input type=\"button\" value=\"";
   page += ee.bMotion ? "OFF":"ON ";
   page += "\" id=\"MOT\" onClick=\"{motTog()}\">"
-          "</td></tr>"
+          "</td></tr>\n"
           "<tr><td>PushBullet:</td><td>"
           "<input type=\"button\" value=\"";
   page += ee.bEnablePB[0] ? "OFF":"ON ";
@@ -368,28 +381,28 @@ void handleRoot() // Main webpage interface
           " Mot <input type=\"button\" value=\"";
   page += ee.bEnablePB[1] ? "OFF":"ON ";
   page += "\" id=\"PB1\" onClick=\"{pbToggle1()}\">"
-          "</td></tr>"
+          "</td></tr>\n"
           "<tr><td>Message:</td><td>";
   page += valButton("M", "" );
-  page += "</td></tr>"
+  page += "</td></tr>\n"
           "<tr><td>Location:</td>";
   page += "<td>";  page += valButton("L", ee.location );
-  page += "</td></tr>";
+  page += "</td></tr>\n</table>\n";
+
+  response->print(page);
   if(alert_expire)
   {
-    page += "<tr><td>";
-    page += szAlertDescription;
-    page += "</td></tr>";
+    response->print(szAlertDescription);
   }
-  page += "</table>"
 
-          "<input id=\"myKey\" name=\"key\" type=text size=50 placeholder=\"password\" style=\"width: 150px\">"
-          "<input type=\"button\" value=\"Save\" onClick=\"{localStorage.setItem('key', key = document.all.myKey.value)}\">"
+  page = "<input id=\"myKey\" name=\"key\" type=text size=50 placeholder=\"password\" style=\"width: 150px\">"
+          "<input type=\"button\" value=\"Save\" onClick=\"{localStorage.setItem('key', key = document.all.myKey.value)}\">\n"
           "<br><small>Logged IP: ";
-  page += server.client().remoteIP().toString();
-  page += "</small></div></body></html>";
+  page += request->client()->localIP().toString();
+  page += "</small></div>\n</body>\n</html>";
+  response->print(page);
 
-  server.send ( 200, "text/html", page );
+  request->send ( response );
 }
 
 String valButton(String id, String val)
@@ -435,20 +448,20 @@ String timeToTxt(timeStamp &t)  // string "Sun 12:00:00 AM"
   return s;
 }
 
-void handleS()
+void handleS(AsyncWebServerRequest *request)
 {
-  parseParams();
+  parseParams(request);
 
   String page = "{\"ip\": \"";
   page += WiFi.localIP().toString();
   page += ":";
   page += serverPort;
   page += "\"}";
-  server.send ( 200, "text/json", page );
+  request->send( 200, "text/json", page );
 }
 
 // JSON format for initial or full data read
-void handleJson()
+void handleJson(AsyncWebServerRequest *request)
 {
   String s = "{\"weather\": \"";
   s += szWeatherCond;
@@ -476,60 +489,18 @@ void handleJson()
     s += "\"";
   }
   s += "}";
-  server.send( 200, "text/json", s );
+  request->send( 200, "text/json", s );
 }
 
-// event streamer (assume keep-alive) (esp8266 2.1.0 can't handle this)
-void handleEvents()
+void onRequest(AsyncWebServerRequest *request){
+  //Handle Unknown Request
+  request->send(404);
+}
+
+void onEvents(AsyncEventSourceClient *client)
 {
-  char temp[100];
-  Serial.println("handleEvents");
-  uint16_t interval = 60; // default interval
-  uint8_t nType = 0;
-
-  for ( uint8_t i = 0; i < server.args(); i++ ) {
-    server.arg(i).toCharArray(temp, 100);
-    String s = wifi.urldecode(temp);
-//    Serial.println( i + " " + server.argName ( i ) + ": " + s);
-    int val = s.toInt();
- 
-    switch( server.argName(i).charAt(0)  )
-    {
-      case 'i': // interval
-        interval = val;
-        break;
-      case 'p': // push
-        nType = 1;
-        break;
-      case 'c': // critical
-        nType = 2;
-        break;
-    }
-  }
-
-  String content = "HTTP/1.1 200 OK\r\n"
-      "Connection: keep-alive\r\n"
-      "Access-Control-Allow-Origin: *\r\n"
-      "Content-Type: text/event-stream\r\n\r\n";
-  server.sendContent(content);
-  event.set(server.client(), interval, nType);
-}
-
-void handleNotFound() {
-  String message = "File Not Found\n\n";
-  message += "URI: ";
-  message += server.uri();
-  message += "\nMethod: ";
-  message += ( server.method() == HTTP_GET ) ? "GET" : "POST";
-  message += "\nArguments: ";
-  message += server.args();
-  message += "\n";
-
-  for ( uint8_t i = 0; i < server.args(); i++ ) {
-    message += " " + server.argName ( i ) + ": " + server.arg ( i ) + "\n";
-  }
-
-  server.send ( 404, "text/plain", message );
+//  client->send(":ok", NULL, millis(), 1000);
+  events.send(dataJson().c_str(), "state");
 }
 
 // called when doorbell rings (or test)
@@ -549,14 +520,21 @@ void doorBell()
   doorbellTimes[doorbellTimeIdx].s = second();
   doorbellTimes[doorbellTimeIdx].a = isPM();
 
-  event.alert("Doorbell "  + timeToTxt( doorbellTimes[doorbellTimeIdx]) );
-  event.push(); // instant update on the web page
+  String s = "Doorbell "  + timeToTxt( doorbellTimes[doorbellTimeIdx]);
+  events.send(s.c_str(), "alert" );
+  events.send(dataJson().c_str(), "state"); // instant update on the web page
 
   // make sure it's more than 5 mins between triggers to send a PB
   if( newtime - dbTime > 5 * 60)
   {
     if(ee.bEnablePB[0])
-      pushBullet("Doorbell", "The doorbell rang at " + timeToTxt( doorbellTimes[doorbellTimeIdx]) );
+    {
+      if(!pb.send("Doorbell", "The doorbell rang at " + timeToTxt( doorbellTimes[doorbellTimeIdx]), ee.pbToken ))
+      {
+        events.send("PushBullet connection failed", "print");
+        Serial.println("PB error DB");
+      }
+    }
   }
 
   if(doorbellTimeIdx < DB_CNT)
@@ -582,14 +560,18 @@ void motion()
   pirStamp.m = minute();
   pirStamp.s = second();
   pirStamp.a = isPM();
-
-  event.alert("Motion " + timeToTxt( pirStamp ) );
-  event.push();
+  String s = "Motion " + timeToTxt( pirStamp );
+  events.send(s.c_str(), "alert" );
+  events.send(dataJson().c_str(), "state"); // instant update on the web page
   // make sure it's more than 5 mins between triggers to send a PB
   if( newtime - pirTime > 5 * 60)
   {
     if(ee.bEnablePB[1])
-      pushBullet("Doorbell", "Motion at " + timeToTxt( pirStamp) );
+       if(!pb.send("Doorbell", "Motion at " + timeToTxt( pirStamp), ee.pbToken ))
+       {
+        events.send("PushBullet connection failed", "print");
+        Serial.println("PB error MOT");
+       }
   }
  
   pirTime = newtime; // latest trigger
@@ -636,19 +618,24 @@ void setup()
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
 
-  if ( MDNS.begin ( "doorbell", WiFi.localIP() ) ) {
-    Serial.println ( "MDNS responder started" );
+  if ( !MDNS.begin ( "doorbell" ) ) {
+    Serial.println ( "MDNS responder error" );
   }
 
-  server.on ( "/", handleRoot );
-  server.on ( "/s", handleS );
-  server.on ( "/json", handleJson );
-  server.on ( "/events", handleEvents );
-//  server.on ( "/inline", []() {
-//    server.send ( 200, "text/plain", "this works as well" );
-//  } );
-  server.onNotFound ( handleNotFound );
+  // attach AsyncEventSource
+  events.onConnect(onEvents);
+  server.addHandler(&events);
+
+  server.on ( "/", HTTP_GET | HTTP_POST, handleRoot );
+  server.on ( "/s", HTTP_GET | HTTP_POST, handleS );
+  server.on ( "/json", HTTP_GET, handleJson );
+
+  server.onNotFound(onRequest);
+  server.onFileUpload(onUpload);
+  server.onRequestBody(onBody);
+
   server.begin();
+
   MDNS.addService("http", "tcp", serverPort);
 
   wuConditions();
@@ -662,9 +649,6 @@ void loop()
   static bool bPulseLED = false;
 
   MDNS.update();
-  server.handleClient();
-  wuClient1.service();
-  wuClient2.service();
 
   if(bPirTriggered)
   {
@@ -688,6 +672,13 @@ void loop()
   if(sec_save != second()) // only do stuff once per second (loop is maybe 20-30 Hz)
   {
     sec_save = second();
+
+    static uint8_t cnt = 20;
+    if(--cnt == 0) // heartbeat I guess
+    {
+      cnt = 10;
+      events.send(dataJson().c_str(), "state");
+    }
 
     if(min_save != minute())
     {
@@ -726,7 +717,7 @@ void loop()
             wuCall = 0;
             break;
         }
-        wuMins = 10; // free account has something like a max of 10 per hour
+        wuMins = 10; // free account has a max of 10 per minute, 500 per day (every 3 minutes)
       }
 
       if (hour_save != hour()) // hourly stuff
@@ -761,8 +752,6 @@ void loop()
     {
       digitalWrite(ESP_LED, HIGH);
     }
-
-    event.heartbeat();
   }
 
   DrawScreen();
@@ -1029,7 +1018,7 @@ void wuCondCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
       iconFromName(psValue);
       break;
     case 17: // error (like a bad key or url)
-      event.alert(psValue);
+      events.send(psValue, "alert");
       break;
   }
 }
@@ -1088,32 +1077,10 @@ void wuAlertsCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
       alert_expire += (3600 * TZ );
       break;
     case 3: // message (too long to watch on the scroller)
-    {
-        int i;
-        for(i = 0; i < sizeof(szAlertMessage)-2; i++)
-        {
-          if(*psValue == '\\')
-          {
-            psValue += 2; // assume \u000A (unsigned 16 bit)
-            psValue += 4;
-            szAlertMessage[i] = ' '; // convert to a space
-          }
-          else
-          {
-            szAlertMessage[i] = *psValue++;
-          }
-        }
-        szAlertMessage[i++] = ' '; // space
-        szAlertMessage[i] = 0; //null term
-      }
-      event.alert(szAlertMessage);
-
-//    Serial.print("alert_message ");
-//    Serial.println(szAlertMessage);
-
+      events.send(psValue, "alert");
       break;
     case 6: // error
-      event.alert(psValue);
+      events.send(psValue, "alert");
       break;
   }
 }
@@ -1213,42 +1180,4 @@ uint16_t Fletcher16( uint8_t* data, int count)
    }
 
    return (sum2 << 8) | sum1;
-}
-
-// Send a push notification
-void pushBullet(const char *pTitle, String sBody)
-{
-  WiFiClientSecure client;
-  const char host[] = "api.pushbullet.com";
-  const char url[] = "/v2/pushes";
-
-  if (!client.connect(host, 443))
-  {
-    event.print("PushBullet connection failed");
-    return;
-  }
-
-  // Todo: The key should be verified here
-
-  String data = "{\"type\": \"note\", \"title\": \"";
-  data += pTitle;
-  data += "\", \"body\": \"";
-  data += sBody;
-  data += "\"}";
-
-  client.print(String("POST ") + url + " HTTP/1.1\r\n" +
-              "Host: " + host + "\r\n" +
-              "Content-Type: application/json\r\n" +
-              "Access-Token: " + ee.pbToken + "\r\n" +
-              "User-Agent: Arduino\r\n" +
-              "Content-Length: " + data.length() + "\r\n" + 
-              "Connection: close\r\n\r\n" +
-              data + "\r\n\r\n");
- 
-  int i = 0;
-  while (client.connected() && ++i < 10)
-  {
-    String line = client.readStringUntil('\n');
-    Serial.println(line);
-  }
 }
