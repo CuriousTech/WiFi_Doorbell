@@ -13,8 +13,6 @@
 #define WiFiManager_h
 
 #include <ESP8266WiFi.h>
-
-#include <EEPROM.h>
 #include <ESP8266mDNS.h>
 #include <WiFiClient.h>
 
@@ -30,11 +28,8 @@
 class WiFiManager
 {
 public:
-    WiFiManager(int eepromStart);
-    void begin();
-    void begin(char const *apName);
-    
-    boolean autoConnect();
+    WiFiManager();
+    boolean autoConnect(void);
     boolean autoConnect(char const *apName);
     boolean findOpenAP(char const *szUrl);
 
@@ -42,12 +37,7 @@ public:
     
     void beginConfigMode(void);
     void startWebConfig(String ssid);
-    
-    String getSSID();
-    String getPassword();
-    void eeReadData(int addr, uint8_t *data, int size);
-    void eeWriteData(int addr, uint8_t *data, int size);
-    //for conveniennce
+    //for convenience
     String urldecode(const char*);
 private:
     const int WM_DONE = 0;
@@ -63,14 +53,11 @@ private:
     const String HTTP_ITEM = "<div><a href='#' onclick='c(this)'>{v}</a></div>";
     const String HTTP_FORM = "<form method='get' action='s'><input id='s' name='ssid' length=32 placeholder='SSID'><input id='p' name='pass' length=64 placeholder='password'><br/><input type='submit'></form>";
     const String HTTP_END = "</body></html>";
-    
-    int _eepromStart;
+
     const char* _apName = "no-net";
     String _ssid = "";
     String _pass = "";
 
-    String getEEPROMString(int start, int len);
-    void setEEPROMString(int start, int len, String string);
     int serverLoop(void);
     boolean attemptClient(const char *szUrl);
     void drawSpinner(int count, int active);
