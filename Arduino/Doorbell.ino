@@ -36,6 +36,7 @@ SOFTWARE.
 
 #include <JsonClient.h> // https://github.com/CuriousTech/ESP8266-HVAC/tree/master/Libraries/JsonClient
 #include "PushBullet.h"
+#include "eeMem.h"
 
 const char controlPassword[] = "password"; // device password for modifying any settings
 int serverPort = 80; // port to access this device
@@ -76,7 +77,7 @@ SSD1306 display(0x3c, SDA, SCL); // Initialize the oled display for address 0x3c
 int displayOnTimer;             // temporary OLED turn-on
 String sMessage;
 
-WiFiManager wifi(0);  // AP page:  192.168.4.1
+WiFiManager wifi;  // AP page:  192.168.4.1
 AsyncWebServer server( serverPort );
 AsyncEventSource events("/events"); // event source (Server-Sent events)
 
@@ -84,27 +85,7 @@ PushBullet pb;
 
 int httpPort = 80; // may be modified by open AP scan
 
-struct eeSet // EEPROM backed data
-{
-  uint16_t size;          // if size changes, use defauls
-  uint16_t sum;           // if sum is diiferent from memory struct, write
-  char    location[32];   // location for wunderground
-  bool    bEnablePB[2];   // enable pushbullet for doorbell, motion
-  bool    bEnableOLED;
-  bool    bMotion;        // motion activated clear
-  char    pbToken[40];    // 34
-  char    wuKey[20];      // 16
-  char    reserved[64];
-};
-eeSet ee = { sizeof(eeSet), 0xAAAA,
-  "41042", // "KKYFLORE10"
-  {false, false},  // Enable pushbullet
-  true,   // Enable OLED
-  false,
-  "pushbullet token here",
-  "wunderground key goes here",
-  ""
-};
+eeMem eemem;
 
 String dataJson() // timed/instant pushed data
 {
@@ -114,20 +95,20 @@ String dataJson() // timed/instant pushed data
   s +=",\"weather\": \"";
   s += szWeatherCond;
   s += "\",\"pir\": \"";
-    s += timeToTxt(pirStamp);
-    s += "\",\"bellCount\": ";
-    s += doorbellTimeIdx;
-    for(int i = 0; i < DB_CNT; i++)
-    {
-      s += ",\"t";
-      s += i;
-      s += "\":\"";
-      if(doorbellTimeIdx > i)  // just make them "" if not valid
-        s += timeToTxt(doorbellTimes[i]);
-      s += "\"";
-    }
-    s += "}";
-    return s;
+  s += timeToTxt(pirStamp);
+  s += "\",\"bellCount\": ";
+  s += doorbellTimeIdx;
+  for(int i = 0; i < DB_CNT; i++)
+  {
+    s += ",\"t";
+    s += i;
+    s += "\":\"";
+    if(doorbellTimeIdx > i)  // just make them "" if not valid
+      s += timeToTxt(doorbellTimes[i]);
+    s += "\"";
+  }
+  s += "}";
+  return s;
 }
 
 void wuCondCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
@@ -159,6 +140,12 @@ void parseParams(AsyncWebServerRequest *request)
 
     p->value().toCharArray(temp, 100);
     String s = wifi.urldecode(temp);
+/* // monitor this for entertainment if it's on port 80 :)
+  Serial.print(" par=");
+  Serial.println(p->name());
+  Serial.print(" > ");
+  Serial.println(s);
+*/
     switch( p->name().charAt(0)  )
     {
       case 'k': // key
@@ -167,7 +154,7 @@ void parseParams(AsyncWebServerRequest *request)
     }
   }
 
-  uint32_t ip = request->client()->localIP();
+  uint32_t ip = request->client()->localIP(); // Bug: need remote IP
 
   if(strcmp(controlPassword, password))
   {
@@ -178,7 +165,7 @@ void parseParams(AsyncWebServerRequest *request)
     if(ip != lastIP)  // if different IP drop it down
        nWrongPass = 10;
     String data = "{\"ip\":\"";
-    data += request->client()->localIP().toString();
+    data += request->client()->localIP().toString(); // Bug: need remote IP
     data += "\",\"pass\":\"";
     data += password; // a String object here adds a NULL.  Possible bug in SDK
     data += "\"}";
@@ -330,7 +317,9 @@ const char part3[] PROGMEM = ";i++){\n"
 
 void handleRoot(AsyncWebServerRequest *request) // Main webpage interface
 {
-  Serial.println("handleRoot");
+//  Serial.println("handleRoot");
+//  Serial.print("handleRoot for ");
+//  Serial.println(request->client()->localIP().toString());
 
   parseParams(request);
 
@@ -399,7 +388,9 @@ void handleRoot(AsyncWebServerRequest *request) // Main webpage interface
           "<input type=\"button\" value=\"Save\" onClick=\"{localStorage.setItem('key', key = document.all.myKey.value)}\">\n"
           "<br><small>Logged IP: ";
   page += request->client()->localIP().toString();
-  page += "</small></div>\n</body>\n</html>";
+  page += "</div>\n"
+          "Copyright &copy 2016 CuriousTech.net</small>\n"
+          "</body>\n</html>";
   response->print(page);
 
   request->send ( response );
@@ -601,17 +592,13 @@ void setup()
 
   // initialize dispaly
   display.init();
-
   display.clear();
   display.display();
 
   Serial.begin(115200);
-//  delay(3000);
   Serial.println();
-
   WiFi.hostname("doorbell");
   wifi.autoConnect("Doorbell");
-  eeRead(); // don't access EE before WiFi init
 
   Serial.println("");
   Serial.println("WiFi connected");
@@ -723,7 +710,7 @@ void loop()
       if (hour_save != hour()) // hourly stuff
       {
         hour_save = hour();
-        eeWrite(); // update EEPROM if needed
+        eemem.update(); // update EEPROM if needed
       }
     }
 
@@ -973,6 +960,7 @@ void wuCondCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
   {
     case 0:
       strcpy(szWeatherCond, psValue);
+      events.send(psValue, "print");
       break;
     case 1:
       TempF = atof(psValue);
@@ -1103,18 +1091,6 @@ void wuAlerts()
   wuClient2.addList(jsonList2);
 }
 
-void eeWrite() // write the settings if changed
-{
-  uint16_t old_sum = ee.sum;
-  ee.sum = 0;
-  ee.sum = Fletcher16((uint8_t *)&ee, sizeof(eeSet));
-
-  if(old_sum == ee.sum)
-    return; // Nothing has changed?
-
-  wifi.eeWriteData(64, (uint8_t*)&ee, sizeof(ee)); // WiFiManager already has an instance open, so use that at offset 64+
-}
-
 void alertIcon(char *p)
 {
   struct alert2icon
@@ -1153,31 +1129,4 @@ void alertIcon(char *p)
       break;
     }
   }
-}
-
-void eeRead()
-{
-  eeSet eeTest;
-
-  wifi.eeReadData(64, (uint8_t*)&eeTest, sizeof(eeSet));
-  if(eeTest.size != sizeof(eeSet)) return; // revert to defaults if struct size changes
-  uint16_t sum = eeTest.sum;
-  eeTest.sum = 0;
-  eeTest.sum = Fletcher16((uint8_t *)&eeTest, sizeof(eeSet));
-  if(eeTest.sum != sum) return; // revert to defaults if sum fails
-  memcpy(&ee, &eeTest, sizeof(eeSet));
-}
-
-uint16_t Fletcher16( uint8_t* data, int count)
-{
-   uint16_t sum1 = 0;
-   uint16_t sum2 = 0;
-
-   for( int index = 0; index < count; ++index )
-   {
-      sum1 = (sum1 + data[index]) % 255;
-      sum2 = (sum2 + sum1) % 255;
-   }
-
-   return (sum2 << 8) | sum1;
 }
