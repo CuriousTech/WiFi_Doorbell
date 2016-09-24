@@ -154,7 +154,7 @@ void parseParams(AsyncWebServerRequest *request)
     }
   }
 
-  uint32_t ip = request->client()->localIP(); // Bug: need remote IP
+  uint32_t ip = request->client()->remoteIP(); // Bug: need remote IP
 
   if(strcmp(controlPassword, password))
   {
@@ -165,7 +165,7 @@ void parseParams(AsyncWebServerRequest *request)
     if(ip != lastIP)  // if different IP drop it down
        nWrongPass = 10;
     String data = "{\"ip\":\"";
-    data += request->client()->localIP().toString(); // Bug: need remote IP
+    data += request->client()->remoteIP().toString(); // Bug: need remote IP
     data += "\",\"pass\":\"";
     data += password; // a String object here adds a NULL.  Possible bug in SDK
     data += "\"}";
@@ -319,7 +319,7 @@ void handleRoot(AsyncWebServerRequest *request) // Main webpage interface
 {
 //  Serial.println("handleRoot");
 //  Serial.print("handleRoot for ");
-//  Serial.println(request->client()->localIP().toString());
+//  Serial.println(request->client()->remoteIP().toString());
 
   parseParams(request);
 
@@ -387,7 +387,7 @@ void handleRoot(AsyncWebServerRequest *request) // Main webpage interface
   page = "<input id=\"myKey\" name=\"key\" type=text size=50 placeholder=\"password\" style=\"width: 150px\">"
           "<input type=\"button\" value=\"Save\" onClick=\"{localStorage.setItem('key', key = document.all.myKey.value)}\">\n"
           "<br><small>Logged IP: ";
-  page += request->client()->localIP().toString();
+  page += request->client()->remoteIP().toString();
   page += "</div>\n"
           "Copyright &copy 2016 CuriousTech.net</small>\n"
           "</body>\n</html>";
