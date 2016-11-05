@@ -38,7 +38,6 @@ SOFTWARE.
 #include "PushBullet.h"
 #include "eeMem.h"
 #include "pages.h"
-#include "JsonClient.h"
 
 const char controlPassword[] = "password"; // device password for modifying any settings
 int serverPort = 80; // port to access this device
@@ -63,16 +62,11 @@ int rh;
 int8_t TZ;
 int8_t DST;  // TZ includes DST
 
-struct timeStamp{ // weekday + 12hr time
-  uint8_t x,wd,h,m,s,a;
-};
-
 #define DB_CNT 16
-timeStamp doorbellTimes[DB_CNT];
 int doorbellTimeIdx = 0;
+unsigned long doorbellTimes[DB_CNT];
 bool bAutoClear;
 unsigned long dbTime;
-timeStamp pirStamp;
 unsigned long pirTime;
 
 SSD1306 display(0x3c, SDA, SCL); // Initialize the oled display for address 0x3c, sda=12, sdc=13
@@ -86,53 +80,35 @@ AsyncWebSocket ws("/ws"); // access at ws://[esp ip]/ws
 
 PushBullet pb;
 
-int httpPort = 80; // may be modified by open AP scan
-
 eeMem eemem;
 
 String dataJson() // timed/instant pushed data
 {
   String s = "{";
-  s += "\"t\": ";
-  s += now() - (TZ * 3600);
-  s += ",\"weather\": \"";
-  s += szWeatherCond;
-  s += "\",\"pir\": \"";
-  s += timeToTxt(pirStamp);
-  s += "\",\"bellCount\": ";
-  s += doorbellTimeIdx;
-  s += ",\"o\":";
-  s += ee.bEnableOLED;
-  s += ",\"pbdb\":";
-  s += ee.bEnablePB[0];
-  s += ",\"pbm\":";
-  s += ee.bEnablePB[1];
-  s += ",\"loc\":";
-  s += ee.location;
+  s += "\"t\": "; s += now() - (TZ * 3600);
+  s += ",\"weather\": \""; s += szWeatherCond;
+  s += "\",\"pir\":";  s += pirTime;
+  s += ",\"bellCount\":"; s += doorbellTimeIdx;
+  s += ",\"o\":";  s += ee.bEnableOLED;
+  s += ",\"pbdb\":"; s += ee.bEnablePB[0];
+  s += ",\"pbm\":";  s += ee.bEnablePB[1];
+  s += ",\"loc\":";  s += ee.location;
+  s += ",\"alert\": \""; s += szAlertDescription;
+  s += "\"";
   for(int i = 0; i < DB_CNT; i++)
   {
-    s += ",\"t";
-    s += i;
-    s += "\":\"";
-    if(doorbellTimeIdx > i)  // just make them "" if not valid
-      s += timeToTxt(doorbellTimes[i]);
-    s += "\"";
+    s += ",\"t";  s += i;  s += "\":";
+    s += doorbellTimes[i];
   }
   s += "}";
   return s;
 }
 
 void wuCondCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
-JsonClient wuClient1(wuCondCallback);
-void wuConditions(void);
-void wuAlertsCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
-JsonClient wuClient2(wuAlertsCallback);
-void wuAlerts(void);
+JsonClient wuClient(wuCondCallback);
+void wuConditions(bool bAlerts);
 void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
 JsonClient jsonParse(jsonCallback);
-
-const char days[7][4] = {"Sun","Mon","Tue","Wed","Thr","Fri","Sat"};
-const char months[12][4] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
 
 void parseParams(AsyncWebServerRequest *request)
 {
@@ -231,26 +207,14 @@ void parseParams(AsyncWebServerRequest *request)
       case 't': // test
           doorBell();
           break;
+      case 's': // ssid
+          s.toCharArray(ee.szSSID, sizeof(ee.szSSID));
+          break;
+      case 'p': // pass
+          wifi.setPass(s.c_str());
+          break;
     }
   }
-}
-
-void onBody(AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
-  //Handle body
-}
-
-void onUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final){
-  //Handle upload
-}
-
-void handleRoot(AsyncWebServerRequest *request) // Main webpage interface
-{
-//  Serial.print("handleRoot for ");
-//  Serial.println(request->client()->remoteIP().toString());
-
-  parseParams(request);
-
-  request->send_P( 200, "text/html", page1 );
 }
 
 // Current time in hh:mm:ss AM/PM
@@ -270,19 +234,25 @@ String timeFmt()
   return r;
 }
 
-String timeToTxt(timeStamp &t)  // string "Sun 12:00:00 AM"
+String timeToTxt(unsigned long &t)  // GMT to string "Sun 12:00:00 AM"
 {
-  String s = days[t.wd];
+  tmElements_t tm;
+  breakTime(t + (3600 * TZ), tm);
+ 
+  String s = dayShortStr(tm.Wday);
   s += " ";
-  s += t.h;
+  int h = tm.Hour;
+  if(h == 0) h = 12;
+  else if(h > 12) h -= 12;
+  s += h;
   s += ":";
-  if(t.m < 10)  s += "0";
-  s += t.m;
+  if(tm.Minute < 10)  s += "0";
+  s += tm.Minute;
   s += ":";
-  if(t.s < 10)  s += "0";
-  s += t.s;
+  if(tm.Second < 10)  s += "0";
+  s += tm.Second;
   s += " ";
-  s += t.a ? "PM" : "AM";  
+  s += tm.Hour > 11 ? "PM" : "AM";  
   return s;
 }
 
@@ -301,49 +271,33 @@ void handleS(AsyncWebServerRequest *request)
 // JSON format for initial or full data read
 void handleJson(AsyncWebServerRequest *request)
 {
-  String s = "{\"weather\": \"";
-  s += szWeatherCond;
-  s += "\",\"location\": \"";
-  s += ee.location;
-  s += "\",\"bellCount\": ";
-  s += doorbellTimeIdx;
-  s += ",\"display\": ";
-  s += ee.bEnableOLED;
-  s += ",\"temp\": \"";
-  s += String(TempF,1);
-  s += "\",\"rh\": ";
-  s += rh;
-  s += ",\"time\": ";
-  s += now();
-  s += ",\"pir\": ";
-  s += pirTime;
+  String s = "{\"";
+  s += "weather\": \"";  s += szWeatherCond;
+  s += "\",\"location\": \"";  s += ee.location;
+  s += "\",\"bellCount\": ";  s += doorbellTimeIdx;
+  s += ",\"display\": ";  s += ee.bEnableOLED;
+  s += ",\"temp\": \"";  s += String(TempF,1);
+  s += "\",\"rh\": ";  s += rh;
+  s += ",\"time\": ";  s += now() - (TZ * 3600);
+  s += ",\"pir\": ";  s += pirTime;
   for(int i = 0; i < DB_CNT; i++)
   {
-    s += ",\"t";
-    s += i;
-    s += "\":\"";
-    if(doorbellTimeIdx > i)
-      s += timeToTxt(doorbellTimes[i]);
-    s += "\"";
+    s += ",\"t"; s += i;  s += "\":";
+    s += doorbellTimes[i];
   }
   s += "}";
   request->send( 200, "text/json", s );
 }
 
-void onRequest(AsyncWebServerRequest *request){
-  //Handle Unknown Request
-  request->send(404);
-}
-
 void onEvents(AsyncEventSourceClient *client)
 {
   static bool rebooted = true;
-  events.send(dataJson().c_str(), "state");
   if(rebooted)
   {
     rebooted = false;
     events.send("Restarted", "alert");
   }
+  sendState();
 }
 
 const char *jsonListCmd[] = { "cmd",
@@ -362,6 +316,8 @@ bool bKeyGood;
 
 void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
 {
+  if(iName && !bKeyGood)
+    return;
   switch(iEvent)
   {
     case 0: // cmd
@@ -373,23 +329,23 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
           break;
         case 1: // reset
           if(doorbellTimeIdx)
+          {
             doorbellTimeIdx = 0;
+            memset(doorbellTimes, 0, sizeof(doorbellTimes));
+          }
           else
             alert_expire = 0; // clear the alert
           break;
         case 2: // pbdb
-          if(bKeyGood)
-            ee.bEnablePB[0] = iValue;
+          ee.bEnablePB[0] = iValue;
           break;
         case 3: // pbm
-          if(bKeyGood)
-            ee.bEnablePB[1] = iValue;
+          ee.bEnablePB[1] = iValue;
           break;
         case 4: // motion
           ee.bMotion =iValue;
           break;
         case 5: // OLED
-          if(!bKeyGood) break;
           ee.bEnableOLED = iValue ? true:false;
           break;
         case 6: // msg
@@ -401,9 +357,7 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
           }
           break;
         case 7: // loc
-          if(!bKeyGood) break;
           strncpy(ee.location, psValue, sizeof(ee.location));
-          break;
           break;
       }
       break;
@@ -412,9 +366,16 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
 
 void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len)
 {  //Handle WebSocket event
+  static bool bReset = true;
+
   switch(type)
   {
     case WS_EVT_CONNECT:      //client connected
+      if(bReset)
+      {
+        client->printf("alert;restarted");
+        bReset = false;
+      }
       client->printf("state;%s", dataJson().c_str());
       client->ping();
       break;
@@ -434,12 +395,21 @@ void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventT
           char *pCmd = strtok((char *)data, ";"); // assume format is "name;{json:x}"
           char *pData = strtok(NULL, "");
 
+          if(pCmd == NULL || pData == NULL) break;
           bKeyGood = false; // for callback (all commands need a key)
           jsonParse.process(pCmd, pData);
         }
       }
       break;
   }
+}
+
+static int ssCnt = 10;
+void sendState()
+{
+  events.send(dataJson().c_str(), "state"); // instant update on the web page
+  ws.printfAll("state;%s", dataJson().c_str());
+  ssCnt = 10;
 }
 
 // called when doorbell rings (or test)
@@ -453,18 +423,12 @@ void doorBell()
   if( newtime - dbTime < 10) // ignore bounces and double taps
     return;
 
-  doorbellTimes[doorbellTimeIdx].wd = weekday()-1;
-  doorbellTimes[doorbellTimeIdx].h = hourFormat12();
-  doorbellTimes[doorbellTimeIdx].m = minute();
-  doorbellTimes[doorbellTimeIdx].s = second();
-  doorbellTimes[doorbellTimeIdx].a = isPM();
+  doorbellTimes[doorbellTimeIdx] = newtime;
 
   String s = "Doorbell "  + timeToTxt( doorbellTimes[doorbellTimeIdx]);
   events.send(s.c_str(), "alert" );
-  events.send(dataJson().c_str(), "state"); // instant update on the web page
-  ws.printfAll("state;%s", dataJson().c_str());
   ws.printfAll("alert;%s", s.c_str());
-
+  sendState();
   // make sure it's more than 5 mins between triggers to send a PB
   if( newtime - dbTime > 5 * 60)
   {
@@ -496,26 +460,19 @@ void motion()
   if( newtime - pirTime < 30) // limit triggers
     return;
 
-  pirStamp.wd = weekday()-1;
-  pirStamp.h = hourFormat12();
-  pirStamp.m = minute();
-  pirStamp.s = second();
-  pirStamp.a = isPM();
-  String s = "Motion " + timeToTxt( pirStamp );
+  String s = "Motion " + timeToTxt( newtime );
   events.send(s.c_str(), "alert" );
-  events.send(dataJson().c_str(), "state"); // instant update on the web page
-  ws.printfAll("state;%s", dataJson().c_str());
+  sendState();
   // make sure it's more than 5 mins between triggers to send a PB
   if( newtime - pirTime > 5 * 60)
   {
     if(ee.bEnablePB[1])
-       if(!pb.send("Doorbell", "Motion at " + timeToTxt( pirStamp), ee.pbToken ))
+       if(!pb.send("Doorbell", "Motion at " + timeToTxt(newtime), ee.pbToken ))
        {
         events.send("PushBullet connection failed", "print");
         Serial.println("PB error MOT");
        }
   }
- 
   pirTime = newtime; // latest trigger
 }
 
@@ -551,13 +508,15 @@ void setup()
   WiFi.hostname("doorbell");
   wifi.autoConnect("Doorbell");
 
-  Serial.println("");
-  Serial.println("WiFi connected");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
-
-  if ( !MDNS.begin ( "doorbell" ) ) {
-    Serial.println ( "MDNS responder error" );
+  if(wifi.isCfg())
+  {
+    Serial.println("");
+    Serial.println("WiFi connected");
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
+  
+    if ( !MDNS.begin ( "doorbell" ) )
+      Serial.println ( "MDNS responder error" );
   }
 
   // attach AsyncEventSource
@@ -567,21 +526,39 @@ void setup()
   ws.onEvent(onWsEvent);
   server.addHandler(&ws);
 
-  server.on ( "/", HTTP_GET | HTTP_POST, handleRoot );
+  server.on ( "/", HTTP_GET | HTTP_POST, [](AsyncWebServerRequest *request){
+    parseParams(request);
+    if(wifi.isCfg())
+      request->send( 200, "text/html", wifi.page() );
+    else
+      request->send_P( 200, "text/html", page1 );
+    String s = "Request from ";
+    s += request->client()->remoteIP().toString();
+    events.send(s.c_str(), "print");
+  });
+
   server.on ( "/s", HTTP_GET | HTTP_POST, handleS );
   server.on ( "/json", HTTP_GET, handleJson );
 
-  server.onNotFound(onRequest);
-  server.onFileUpload(onUpload);
-  server.onRequestBody(onBody);
+  server.onNotFound([](AsyncWebServerRequest *request){
+    //Handle Unknown Request
+    request->send(404);
+  });
+  server.onFileUpload([](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final){
+  });
+  server.onRequestBody([](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
+  });
 
   server.begin();
   jsonParse.addList(jsonListCmd);
 
   MDNS.addService("http", "tcp", serverPort);
 
-  wuConditions();
+  if(!wifi.isCfg())
+    wuConditions(false);
 }
+
+int8_t msgCnt;
 
 void loop()
 {
@@ -615,12 +592,9 @@ void loop()
   {
     sec_save = second();
 
-    static uint8_t cnt = 20;
-    if(--cnt == 0) // heartbeat I guess
+    if(--ssCnt == 0) // heartbeat I guess
     {
-      cnt = 10;
-      events.send(dataJson().c_str(), "state");
-      ws.printfAll("state;%s", dataJson().c_str());
+      sendState();
     }
 
     if(min_save != minute())
@@ -650,11 +624,11 @@ void loop()
 
             if(bGetCond)
             {
-              wuConditions();
+              wuConditions(false);
               break;
             } // fall through if not getting conditions (checks alerts every 10 mins)
           case 1:
-            wuAlerts();
+            wuConditions(true);
             break;
           default:
             wuCall = 0;
@@ -697,32 +671,28 @@ void loop()
     }
   }
 
-  DrawScreen();
-}
+  if(wifi.isCfg())
+    return;
 
-int8_t msgCnt = 0;
-
-void DrawScreen()
-{
+// screen draw from here on (fixed a stack trace dump)
   static int16_t ind;
   static bool blnk = false;
   static long last_blnk;
   static long last_min;
   static int16_t iconX = 0;
   static int16_t infoX = 64;
+  String s;
 
-  if(minute() != last_min) // alternate static images
+  if(minute() != last_min) // alternate the display to prevent burn
   {
     last_min = minute();
     if(iconX)
     {
-      iconX = 0;
-      infoX = 64;
+      iconX = 0;      infoX = 64;
     }
     else
     {
-      iconX = 64;
-      infoX = 0;
+      infoX = 0;      iconX = 64;
     }
   }
   
@@ -737,8 +707,6 @@ void DrawScreen()
 
   if( (ee.bEnableOLED || displayOnTimer || alert_expire) && (bAutoClear == false)) // skip for motion enabled display
   {
-    String s;
-
     if(alert_expire) // if there's an alert message
     {
       sMessage = szAlertDescription; // set the scroller message
@@ -762,11 +730,11 @@ void DrawScreen()
     {
       s = timeFmt();
       s += "  ";
-      s += days[weekday()-1];
+      s += dayShortStr(weekday());
       s += " ";
       s += String(day());
       s += " ";
-      s += months[month()-1];
+      s += monthShortStr(month());
       s += "  ";
       s += szWeatherCond;
       s += "  ";
@@ -786,6 +754,7 @@ void DrawScreen()
     if(blnk) display.drawXbm(iconX+10, 20, 44, 42, bell);
     display.drawPropString(infoX, 23, String(doorbellTimeIdx) ); // count
   }
+
   display.display();
 }
 
@@ -901,6 +870,13 @@ const char *jsonList1[] = { "",
   "local_tz_short",
   "local_tz_offset",  // 15     -0400
   "icon",             // 16     name list
+  // alert names
+  "type",             // 17
+  "description",
+  "expires_epoch",
+  "message",
+  "phenomena", // 5  //: "HT",
+  "significance", //: "Y",
   "error",
   NULL
 };
@@ -961,90 +937,47 @@ void wuCondCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
     case 16:
       iconFromName(psValue);
       break;
-    case 17: // error (like a bad key or url)
-      events.send(psValue, "alert");
-      break;
-  }
-}
-
-// Call wunderground for conditions
-void wuConditions()
-{
-  if(ee.location[0] == 0)
-    return;
-  String path = "/api/";
-  path += ee.wuKey;
-  path += "/conditions/q/";
-  path += ee.location;
-  path += ".json";
-
-  char sz[64];
-  path.toCharArray(sz, sizeof(sz));
-  wuClient1.begin("api.wunderground.com", sz, 80, false);
-  wuClient1.addList(jsonList1);
-}
-
-// things we want from alerts request
-const char *jsonList2[] = { "",
-  "type",
-  "description",
-  "expires_epoch",
-  "message",
-  "phenomena", // 5  //: "HT",
-  "significance", //: "Y",
-  "error",
-  NULL
-};
-
-void wuAlertsCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
-{
-  if(iEvent == -1) // connection events
-  {
-    if(iName == JC_CONNECTED)
-      alert_expire = 0; // clear last.  Alerts can cancel before expire time
-    return;
-  }
-
-  switch(iName)
-  {
-    case 0: // type (3 letter)
+// Alerts
+    case 17: // type (3 letter)
       alertIcon(psValue);
       break;
-    case 1: // description
+    case 18: // description
       strncpy(szAlertDescription, psValue, sizeof(szAlertDescription) );
       strcat(szAlertDescription, "  "); // separate end and start on scroller
 //      Serial.print("alert_desc ");
 //      Serial.println(szAlertDescription);
       break;
-    case 2: // expires
+    case 19: // expires
       alert_expire = iValue;
       alert_expire += (3600 * TZ );
       break;
-    case 3: // message (too long to watch on the scroller)
+    case 20: // message (too long to watch on the scroller)
       events.send(psValue, "alert");
       break;
-    case 6: // error
+    case 21: // error (like a bad key or url)
       events.send(psValue, "alert");
       break;
   }
 }
 
-// Call wunderground to check alerts
-void wuAlerts()
+// Call wunderground for conditions or alerts
+void wuConditions(bool bAlerts)
 {
   if(ee.location[0] == 0)
     return;
-
   String path = "/api/";
   path += ee.wuKey;
-  path += "/alerts/q/";
+  if(bAlerts)
+    path += "/alerts/q/";
+  else
+    path += "/conditions/q/";
   path += ee.location;
   path += ".json";
 
   char sz[64];
   path.toCharArray(sz, sizeof(sz));
-  wuClient2.begin("api.wunderground.com", sz, 80, false);
-  wuClient2.addList(jsonList2);
+  wuClient.begin("api.wunderground.com", sz, 80, false);
+  wuClient.addList(jsonList1);
 }
 
 void alertIcon(char *p)
