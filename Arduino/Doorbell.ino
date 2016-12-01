@@ -572,10 +572,11 @@ void loop()
   if(bPirTriggered)
   {
     bPirTriggered = false;
-    if(ee.bEnableOLED == false && displayOnTimer == 0 && doorbellTimeIdx) // motion activated indicator
+    if(ee.bEnableOLED == false) // motion activated display on
     {
       displayOnTimer = 30;
-      bAutoClear = true;
+      if(doorbellTimeIdx) // keep flashing bell for this time, and auto reset it in 30 secs
+        bAutoClear = true;
     }
     motion();
     bPulseLED = true; // blinks the blue LED
@@ -752,7 +753,7 @@ void loop()
   {
     display.drawPropString(0, 0, timeToTxt(doorbellTimes[0]) ); // the first time
     if(blnk) display.drawXbm(iconX+10, 20, 44, 42, bell);
-    display.drawPropString(infoX, 23, String(doorbellTimeIdx) ); // count
+    display.drawPropString(infoX + 5, 23, String(doorbellTimeIdx) ); // count
   }
 
   display.display();
@@ -794,59 +795,60 @@ void Scroller(String s)
   }
 }
 
+struct cond2icon
+{
+  const char *pName;
+  const char *pIcon;
+};
+const cond2icon cdata[] = { // row column from image at http://www.alessioatzeni.com/meteocons/
+  {"chanceflurries", icon72},// 0
+  {"chancerain", icon64},
+  {"chancesleet", icon44},
+  {"chancesnow", icon43},
+  {"chancetstorms", icon34},
+  {"clear",  icon54},// 5
+  {"cloudy", icon75},
+  {"flurries", icon73},
+  {"fog", icon31},
+  {"hazy", icon26},
+  {"mostlycloudy", icon62},// 10
+  {"mostlysunny", icon11},
+  {"partlycloudy", icon22},
+  {"partlysunny", icon56},
+  {"rain", icon65},
+  {"sleet", icon73},
+  {"snow", icon74},
+  {"sunny", icon54},
+  {"tstorms", icon53},
+
+  {"nt_chanceflurries", icon45},
+  {"nt_chancerain", icon35},
+  {"nt_chancesleet", icon42},
+  {"nt_chancesnow", icon44},
+  {"nt_chancetstorms", icon33},
+  {"nt_clear", icon13},
+  {"nt_cloudy", icon32},
+  {"nt_flurries", icon45},
+  {"nt_fog", icon26},
+  {"nt_hazy", icon25},
+  {"nt_mostlycloudy", icon32},
+  {"nt_mostlysunny", icon14},
+  {"nt_partlycloudy", icon23},
+  {"nt_partlysunny", icon23},
+  {"nt_rain", icon22},
+  {"nt_sleet", icon36},
+  {"nt_snow", icon46},
+  {"nt_sunny", icon56},
+  {"nt_tstorms", icon34},
+  {NULL, NULL}
+};
+
 void iconFromName(char *pName)
 {
-  struct cond2icon
-  {
-    const char *pName;
-    const char *pIcon;
-  };
-  cond2icon data[] = { // row column from image at http://www.alessioatzeni.com/meteocons/
-    {"chanceflurries", icon72},// 0
-    {"chancerain", icon64},
-    {"chancesleet", icon44},
-    {"chancesnow", icon43},
-    {"chancetstorms", icon34},
-    {"clear",  icon54},// 5
-    {"cloudy", icon75},
-    {"flurries", icon73},
-    {"fog", icon31},
-    {"hazy", icon26},
-    {"mostlycloudy", icon62},// 10
-    {"mostlysunny", icon11},
-    {"partlycloudy", icon22},
-    {"partlysunny", icon56},
-    {"rain", icon65},
-    {"sleet", icon73},
-    {"snow", icon74},
-    {"sunny", icon54},
-    {"tstorms", icon53},
-
-    {"nt_chanceflurries", icon45},
-    {"nt_chancerain", icon35},
-    {"nt_chancesleet", icon42},
-    {"nt_chancesnow", icon44},
-    {"nt_chancetstorms", icon33},
-    {"nt_clear", icon13},
-    {"nt_cloudy", icon32},
-    {"nt_flurries", icon45},
-    {"nt_fog", icon26},
-    {"nt_hazy", icon25},
-    {"nt_mostlycloudy", icon32},
-    {"nt_mostlysunny", icon14},
-    {"nt_partlycloudy", icon23},
-    {"nt_partlysunny", icon23},
-    {"nt_rain", icon22},
-    {"nt_sleet", icon36},
-    {"nt_snow", icon46},
-    {"nt_sunny", icon56},
-    {"nt_tstorms", icon34},
-    {NULL, NULL}
-  };
-  for(int i = 0; data[i].pName; i++)
-    if(!strcmp(pName, data[i].pName))
+  for(int i = 0; cdata[i].pName; i++)
+    if(!strcmp(pName, cdata[i].pName))
     {
-      pIcon = data[i].pIcon;
+      pIcon = cdata[i].pIcon;
       break;
     }
 }
@@ -980,35 +982,36 @@ void wuConditions(bool bAlerts)
   wuClient.addList(jsonList1);
 }
 
+struct alert2icon
+{
+  const char name[4];
+  const char *pIcon;
+};
+const alert2icon data[] = {
+  {"HUR", tornado}, //Hurricane Local Statement
+  {"TOR", tornado}, //Tornado Warning
+  {"TOW", tornado}, //Tornado Watch
+  {"WRN", icon53},  //Severe Thunderstorm Warning
+  {"SEW", icon53},  //Severe Thunderstorm Watch
+  {"WIN", icon41},  //Winter Weather Advisory
+  {"FLO", icon65},  //Flood Warning
+  {"WAT", iconEye},  //Flood Watch / Statement
+  {"WND", icon16},  //High Wind Advisory
+  {"SVR", pubAnn},  //Severe Weather Statement
+  {"HEA", icon54},  //Heat Advisory
+  {"FOG", icon26},  //Dense Fog Advisory
+  {"SPE", pubAnn},  //Special Weather Statement
+  {"FIR", icon11},  //xFire Weather Advisory
+  {"VOL", icon11},  //xVolcanic Activity Statement
+  {"HWW", tornado}, //Hurricane Wind Warning
+  {"REC", icon11},  //xRecord Set
+  {"REP", pubAnn},  //Public Reports
+  {"PUB", pubAnn},  //Public Information Statement
+  {"", 0}
+};
+
 void alertIcon(char *p)
 {
-  struct alert2icon
-  {
-    const char name[4];
-    const char *pIcon;
-  };
-  alert2icon data[] = {
-    {"HUR", tornado}, //Hurricane Local Statement
-    {"TOR", tornado}, //Tornado Warning
-    {"TOW", tornado}, //Tornado Watch
-    {"WRN", icon53},  //Severe Thunderstorm Warning
-    {"SEW", icon53},  //Severe Thunderstorm Watch
-    {"WIN", icon41},  //Winter Weather Advisory
-    {"FLO", icon65},  //Flood Warning
-    {"WAT", iconEye},  //Flood Watch / Statement
-    {"WND", icon16},  //High Wind Advisory
-    {"SVR", pubAnn},  //Severe Weather Statement
-    {"HEA", icon54},  //Heat Advisory
-    {"FOG", icon26},  //Dense Fog Advisory
-    {"SPE", pubAnn},  //Special Weather Statement
-    {"FIR", icon11},  //xFire Weather Advisory
-    {"VOL", icon11},  //xVolcanic Activity Statement
-    {"HWW", tornado}, //Hurricane Wind Warning
-    {"REC", icon11},  //xRecord Set
-    {"REP", pubAnn},  //Public Reports
-    {"PUB", pubAnn},  //Public Information Statement
-    {"", 0}
-  };
 
   for(int i = 0; data[i].name[0]; i++)
   {
