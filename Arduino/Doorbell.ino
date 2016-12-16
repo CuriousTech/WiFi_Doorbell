@@ -85,22 +85,25 @@ eeMem eemem;
 String dataJson() // timed/instant pushed data
 {
   String s = "{";
-  s += "\"t\": "; s += now() - (TZ * 3600);
-  s += ",\"weather\": \""; s += szWeatherCond;
+  s += "\"t\":";  s += ( now() - (TZ * 3600) );
+  s += ",\"weather\":\""; s += szWeatherCond;
   s += "\",\"pir\":";  s += pirTime;
   s += ",\"bellCount\":"; s += doorbellTimeIdx;
-  s += ",\"o\":";  s += ee.bEnableOLED;
+  s += ",\"o\":"; s += ee.bEnableOLED;
   s += ",\"pbdb\":"; s += ee.bEnablePB[0];
-  s += ",\"pbm\":";  s += ee.bEnablePB[1];
+  s += ",\"pbm\":"; s += ee.bEnablePB[1];
   s += ",\"loc\":";  s += ee.location;
-  s += ",\"alert\": \""; s += szAlertDescription;
-  s += "\"";
+  s += ",\"alert\":\""; s += szAlertDescription; s += "\"";
+  s += ",\"temp\":\""; s += String(TempF,1); s += "\"";
+  s += ",\"rh\":\""; s += rh; s += "\"";
+  s += ",\"wind\":\""; s += szWind; s += "\"";
+  s += ",\"db\":[";
   for(int i = 0; i < DB_CNT; i++)
   {
-    s += ",\"t";  s += i;  s += "\":";
+    if(i) s += ",";
     s += doorbellTimes[i];
   }
-  s += "}";
+  s += "]}";
   return s;
 }
 
@@ -118,7 +121,7 @@ void parseParams(AsyncWebServerRequest *request)
   bool bRemote = false;
   bool ipSet = false;
 
-//  Serial.println("parseArgs");
+//  Serial.println("parseParams");
 
   if(request->params() == 0)
     return;
@@ -256,6 +259,78 @@ String timeToTxt(unsigned long &t)  // GMT to string "Sun 12:00:00 AM"
   return s;
 }
 
+void reportReq(AsyncWebServerRequest *request) // report full request to PC
+{
+  String s = "{\"remote\":\"";
+  s += request->client()->remoteIP().toString();
+  s += "\",\"method\":\"";
+  switch(request->method())
+  {
+    case HTTP_GET: s += "GET"; break;
+    case HTTP_POST: s += "POST"; break;
+    case HTTP_DELETE: s += "DELETE"; break;
+    case HTTP_PUT: s += "PUT"; break;
+    case HTTP_PATCH: s += "PATCH"; break;
+    case HTTP_HEAD: s += "HEAD"; break;
+    case HTTP_OPTIONS: s += "OPTIONS"; break;
+    default: s += "<unknown>"; break;
+  }
+  s += "\",\"host\":\"";
+  s += request->host();
+  s += "\",\"url\":\"";
+  s += request->url();
+  s += "\"";
+  if(request->contentLength()){
+    s +=",\"contentType\":\"";
+    s += request->contentType().c_str();
+    s += "\",\"contentLen\":";
+    s += request->contentLength();
+  }
+
+  int headers = request->headers();
+  int i;
+  if(headers)
+  {
+    s += ",\"header\":[";
+    for(i = 0; i < headers; i++){
+      AsyncWebHeader* h = request->getHeader(i);
+      if(i) s += ",";
+      s +="\"";
+      s += h->name().c_str();
+      s += "=";
+      s += h->value().c_str();
+      s += "\"";
+    }
+    s += "]";
+  }
+  int params = request->params();
+  if(params)
+  {
+    s += ",\"params\":[";
+    for(i = 0; i < params; i++)
+    {
+      AsyncWebParameter* p = request->getParam(i);
+      if(i) s += ",";
+      s += "\"";
+      if(p->isFile()){
+        s += "FILE";
+      } else if(p->isPost()){
+        s += "POST";
+      } else {
+        s += "GET";
+      }
+      s += ",";
+      s += p->name().c_str();
+      s += "=";
+      s += p->value().c_str();
+      s += "\"";
+    }
+    s += "]";
+  }
+  s +="}";
+  events.send(s.c_str(), "request");
+}
+
 void handleS(AsyncWebServerRequest *request)
 {
   parseParams(request);
@@ -266,26 +341,28 @@ void handleS(AsyncWebServerRequest *request)
   page += serverPort;
   page += "\"}";
   request->send( 200, "text/json", page );
+  reportReq(request);
 }
 
 // JSON format for initial or full data read
 void handleJson(AsyncWebServerRequest *request)
 {
   String s = "{\"";
-  s += "weather\": \"";  s += szWeatherCond;
-  s += "\",\"location\": \"";  s += ee.location;
-  s += "\",\"bellCount\": ";  s += doorbellTimeIdx;
-  s += ",\"display\": ";  s += ee.bEnableOLED;
-  s += ",\"temp\": \"";  s += String(TempF,1);
-  s += "\",\"rh\": ";  s += rh;
-  s += ",\"time\": ";  s += now() - (TZ * 3600);
-  s += ",\"pir\": ";  s += pirTime;
+  s += "weather\": \""; s += szWeatherCond;
+  s += "\",\"location\": \""; s += ee.location;
+  s += "\",\"bellCount\": "; s += doorbellTimeIdx;
+  s += ",\"display\": "; s += ee.bEnableOLED;
+  s += ",\"temp\": \""; s += String(TempF,1);
+  s += "\",\"rh\": "; s += rh;
+  s += ",\"time\": "; s += ( now() - (TZ * 3600) );
+  s += ",\"pir\": "; s += pirTime;
+  s += ",\"t\":[";
   for(int i = 0; i < DB_CNT; i++)
   {
-    s += ",\"t"; s += i;  s += "\":";
     s += doorbellTimes[i];
+    s += ",";
   }
-  s += "}";
+  s += "]}";
   request->send( 200, "text/json", s );
 }
 
@@ -300,7 +377,7 @@ void onEvents(AsyncEventSourceClient *client)
   sendState();
 }
 
-const char *jsonListCmd[] = { "cmd",
+const char *jsonListCmd[] = { "cmd", // WebSocket command list
   "key",
   "reset",
   "pbdb", // pushbullet doorbell option
@@ -332,6 +409,7 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
           {
             doorbellTimeIdx = 0;
             memset(doorbellTimes, 0, sizeof(doorbellTimes));
+            sendState();
           }
           else
             alert_expire = 0; // clear the alert
@@ -430,11 +508,13 @@ void doorBell()
   ws.printfAll("alert;%s", s.c_str());
   sendState();
   // make sure it's more than 5 mins between triggers to send a PB
-  if( newtime - dbTime > 5 * 60)
+  if( newtime - dbTime > 3 * 60)
   {
     if(ee.bEnablePB[0])
     {
-      if(!pb.send("Doorbell", "The doorbell rang at " + timeToTxt( doorbellTimes[doorbellTimeIdx]), ee.pbToken ))
+      if(strlen(ee.pbToken) < 30)
+        Serial.println("PB token is missing");
+      else if(!pb.send("Doorbell", "The doorbell rang at " + timeToTxt( doorbellTimes[doorbellTimeIdx]), ee.pbToken ))
       {
         events.send("PushBullet connection failed", "print");
         Serial.println("PB error DB");
@@ -463,8 +543,8 @@ void motion()
   String s = "Motion " + timeToTxt( newtime );
   events.send(s.c_str(), "alert" );
   sendState();
-  // make sure it's more than 5 mins between triggers to send a PB
-  if( newtime - pirTime > 5 * 60)
+  // make sure it's more than 3 mins between triggers to send a PB
+  if( newtime - pirTime > 3 * 60)
   {
     if(ee.bEnablePB[1])
        if(!pb.send("Doorbell", "Motion at " + timeToTxt(newtime), ee.pbToken ))
@@ -526,23 +606,52 @@ void setup()
   ws.onEvent(onWsEvent);
   server.addHandler(&ws);
 
-  server.on ( "/", HTTP_GET | HTTP_POST, [](AsyncWebServerRequest *request){
+  server.on ( "/", HTTP_GET | HTTP_POST, [](AsyncWebServerRequest *request){ // main page (avoids call from root)
     parseParams(request);
     if(wifi.isCfg())
       request->send( 200, "text/html", wifi.page() );
     else
       request->send_P( 200, "text/html", page1 );
-    String s = "Request from ";
-    s += request->client()->remoteIP().toString();
-    events.send(s.c_str(), "print");
+    reportReq(request);
   });
 
   server.on ( "/s", HTTP_GET | HTTP_POST, handleS );
   server.on ( "/json", HTTP_GET, handleJson );
 
-  server.onNotFound([](AsyncWebServerRequest *request){
+  server.onNotFound([](AsyncWebServerRequest *request){ // root and exploits will be called here with *no response* sent back
     //Handle Unknown Request
-    request->send(404);
+    reportReq(request);
+//    request->send(404);
+  });
+
+  server.on("/scan", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "[";
+    int n = WiFi.scanComplete();
+    if(n == -2){
+      WiFi.scanNetworks(true);
+    } else if(n){
+      for (int i = 0; i < n; ++i){
+        if(i) json += ",";
+        json += "{";
+        json += "\"rssi\":"+String(WiFi.RSSI(i));
+        json += ",\"ssid\":\""+WiFi.SSID(i)+"\"";
+        json += ",\"bssid\":\""+WiFi.BSSIDstr(i)+"\"";
+        json += ",\"channel\":"+String(WiFi.channel(i));
+        json += ",\"secure\":"+String(WiFi.encryptionType(i));
+        json += ",\"hidden\":"+String(WiFi.isHidden(i)?"true":"false");
+        json += "}";
+      }
+      WiFi.scanDelete();
+      if(WiFi.scanComplete() == -2){
+        WiFi.scanNetworks(true);
+      }
+    }
+    json += "]";
+    request->send(200, "text/json", json);
+    json = String();
+  });
+  server.on("/heap", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(200, "text/plain", String(ESP.getFreeHeap()));
   });
   server.onFileUpload([](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final){
   });
@@ -934,7 +1043,7 @@ void wuCondCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
       epoch += (3600 * TZ );
       setTime(epoch);
       if(dbTime == 0)
-        dbTime = pirTime = epoch; // powerup setting
+        dbTime = pirTime = epoch - (3*60); // powerup setting
       break;
     case 16:
       iconFromName(psValue);
