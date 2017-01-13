@@ -25,9 +25,8 @@ SOFTWARE.
 
 #include <Wire.h>
 #include "icons.h"
-#include <DHT.h> // http://www.github.com/markruys/arduino-DHT
 #include <TimeLib.h> // http://www.pjrc.com/teensy/td_libs_Time.html
-#include <ssd1306_i2c.h>  // https://github.com/CuriousTech/WiFi_Doorbell/Libraries/ssd1306_i2c
+#include <ssd1306_i2c.h>  // https://github.com/CuriousTech/WiFi_Doorbell/tree/master/Libraries/ssd1306_i2c
 
 #include <EEPROM.h>
 #include <ESP8266mDNS.h>
@@ -54,7 +53,7 @@ int nWrongPass;
 const char *pIcon = icon11;
 const char *pAlertIcon = pubAnn;
 char szWeatherCond[32] = "NA"; // short description
-char szWind[32] = "NA";        // Wind direction (SSW, NWN...)
+char szWind[32] = "NA";        // Wind direction (SSW, NWN...) and speed
 char szAlertDescription[64];   // Severe Thunderstorm Warning, Dense Fog, etc.
 unsigned long alert_expire;   // epoch of alert sell by date
 float TempF;
@@ -121,7 +120,7 @@ void parseParams(AsyncWebServerRequest *request)
   bool bRemote = false;
   bool ipSet = false;
 
-//  Serial.println("parseParams");
+  //Serial.println("parseParams");
 
   if(request->params() == 0)
     return;
@@ -157,6 +156,7 @@ void parseParams(AsyncWebServerRequest *request)
     data += password; // a String object here adds a NULL.  Possible bug in SDK
     data += "\"}";
     events.send(data.c_str(), "hack" ); // log attempts
+    data = String();
     lastIP = ip;
     return;
   }
@@ -329,6 +329,7 @@ void reportReq(AsyncWebServerRequest *request) // report full request to PC
   }
   s +="}";
   events.send(s.c_str(), "request");
+  s = String();
 }
 
 void handleS(AsyncWebServerRequest *request)
@@ -342,6 +343,7 @@ void handleS(AsyncWebServerRequest *request)
   page += "\"}";
   request->send( 200, "text/json", page );
   reportReq(request);
+  page = String();
 }
 
 // JSON format for initial or full data read
@@ -364,6 +366,7 @@ void handleJson(AsyncWebServerRequest *request)
   }
   s += "]}";
   request->send( 200, "text/json", s );
+  s = String();
 }
 
 void onEvents(AsyncEventSourceClient *client)
@@ -487,7 +490,7 @@ void sendState()
 {
   events.send(dataJson().c_str(), "state"); // instant update on the web page
   ws.printfAll("state;%s", dataJson().c_str());
-  ssCnt = 10;
+  ssCnt = 20-( second() % 10);
 }
 
 // called when doorbell rings (or test)
@@ -506,6 +509,7 @@ void doorBell()
   String s = "Doorbell "  + timeToTxt( doorbellTimes[doorbellTimeIdx]);
   events.send(s.c_str(), "alert" );
   ws.printfAll("alert;%s", s.c_str());
+  s = String();
   sendState();
   // make sure it's more than 5 mins between triggers to send a PB
   if( newtime - dbTime > 3 * 60)
@@ -514,11 +518,7 @@ void doorBell()
     {
       if(strlen(ee.pbToken) < 30)
         Serial.println("PB token is missing");
-      else if(!pb.send("Doorbell", "The doorbell rang at " + timeToTxt( doorbellTimes[doorbellTimeIdx]), ee.pbToken ))
-      {
-        events.send("PushBullet connection failed", "print");
-        Serial.println("PB error DB");
-      }
+      else pb.send("Doorbell", "The doorbell rang at " + timeToTxt( doorbellTimes[doorbellTimeIdx]), ee.pbToken );
     }
   }
 
@@ -542,16 +542,13 @@ void motion()
 
   String s = "Motion " + timeToTxt( newtime );
   events.send(s.c_str(), "alert" );
+  s = String();
   sendState();
   // make sure it's more than 3 mins between triggers to send a PB
   if( newtime - pirTime > 3 * 60)
   {
     if(ee.bEnablePB[1])
-       if(!pb.send("Doorbell", "Motion at " + timeToTxt(newtime), ee.pbToken ))
-       {
-        events.send("PushBullet connection failed", "print");
-        Serial.println("PB error MOT");
-       }
+       pb.send("Doorbell", "Motion at " + timeToTxt(newtime), ee.pbToken );
   }
   pirTime = newtime; // latest trigger
 }
@@ -584,17 +581,13 @@ void setup()
   display.display();
 
   Serial.begin(115200);
+//  Serial.setDebugOutput(true);
   Serial.println();
   WiFi.hostname("doorbell");
-  wifi.autoConnect("Doorbell");
+  wifi.autoConnect("Doorbell", controlPassword);
 
   if(wifi.isCfg())
   {
-    Serial.println("");
-    Serial.println("WiFi connected");
-    Serial.println("IP address: ");
-    Serial.println(WiFi.localIP());
-  
     if ( !MDNS.begin ( "doorbell" ) )
       Serial.println ( "MDNS responder error" );
   }
@@ -607,11 +600,14 @@ void setup()
   server.addHandler(&ws);
 
   server.on ( "/", HTTP_GET | HTTP_POST, [](AsyncWebServerRequest *request){ // main page (avoids call from root)
-    parseParams(request);
     if(wifi.isCfg())
       request->send( 200, "text/html", wifi.page() );
-    else
-      request->send_P( 200, "text/html", page1 );
+    reportReq(request);
+  });
+
+  server.on ( "/iot", HTTP_GET | HTTP_POST, [](AsyncWebServerRequest *request){ // main page (avoids call from root)
+    parseParams(request);
+    request->send_P( 200, "text/html", page1 );
     reportReq(request);
   });
 
@@ -662,6 +658,8 @@ void setup()
   jsonParse.addList(jsonListCmd);
 
   MDNS.addService("http", "tcp", serverPort);
+
+  configTime(-5 * 3600, 0, "pool.ntp.org", "time.nist.gov");
 
   if(!wifi.isCfg())
     wuConditions(false);
@@ -850,6 +848,7 @@ void loop()
       s += "  ";
     }
     Scroller(s);
+    s = String();
 
     display.drawPropString(infoX, 23, String(TempF, 1) + "]" );
     display.drawString(infoX + 20, 43, String(rh) + "%");
@@ -884,6 +883,7 @@ void Scroller(String s)
   int len = s.length(); // get length before overlap added
   s += s.substring(0, 18); // add ~screen width overlap
   int w = display.propCharWidth(s.charAt(ind)); // first char for measure
+  if(w > 40) w = 10; // bug
   String sPart = s.substring(ind, ind + 18);
   display.drawPropString(x, 0, sPart );
 
@@ -897,7 +897,7 @@ void Scroller(String s)
       {
         if(--msgCnt == 0) // decrement times to repeat it
         {
-          sMessage = "";
+          sMessage = String();
         }
       }
     }
@@ -986,8 +986,8 @@ const char *jsonList1[] = { "",
   "description",
   "expires_epoch",
   "message",
-  "phenomena", // 5  //: "HT",
-  "significance", //: "Y",
+  "phenomena", // 5  //: "HT" "SP"
+  "significance", //: "Y" "S"
   "error",
   NULL
 };
@@ -998,11 +998,18 @@ void wuCondCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
 
   if(iEvent == -1) // connection events
     return;
-
+/*
+  Serial.print("cb ");
+  Serial.print(iEvent);
+  Serial.print(" ");
+  Serial.print(iName);
+  Serial.print(" ");
+  Serial.println(strlen(psValue));
+*/
   switch(iName)
   {
     case 0:
-      strcpy(szWeatherCond, psValue);
+      strncpy(szWeatherCond, psValue, sizeof(szWeatherCond));
       events.send(psValue, "print");
       break;
     case 1:
@@ -1012,7 +1019,7 @@ void wuCondCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
       rh = iValue;
       break;
     case 3:
-      strcpy(szWind, psValue);
+      strncpy(szWind, psValue, sizeof(szWind));
       break;
     case 4: // wind dir
       break;
@@ -1053,7 +1060,7 @@ void wuCondCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
       alertIcon(psValue);
       break;
     case 18: // description
-      strncpy(szAlertDescription, psValue, sizeof(szAlertDescription) );
+      strncpy(szAlertDescription, psValue, sizeof(szAlertDescription)-3 );
       strcat(szAlertDescription, "  "); // separate end and start on scroller
 //      Serial.print("alert_desc ");
 //      Serial.println(szAlertDescription);
@@ -1085,9 +1092,10 @@ void wuConditions(bool bAlerts)
   path += ee.location;
   path += ".json";
 
-  char sz[64];
-  path.toCharArray(sz, sizeof(sz));
-  wuClient.begin("api.wunderground.com", sz, 80, false);
+//  char sz[64];
+//  path.toCharArray(sz, sizeof(sz));
+  wuClient.begin("api.wunderground.com", path.c_str(), 80, false);
+  path = String();
   wuClient.addList(jsonList1);
 }
 
