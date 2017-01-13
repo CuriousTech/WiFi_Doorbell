@@ -28,8 +28,7 @@ class WiFiManager
 {
 public:
     WiFiManager();
-    void autoConnect(void);
-    void autoConnect(char const *apName);
+    void autoConnect(char const *apName, const char *pPass);
     String page(void);
     void seconds(void);
     void setPass(const char *p);
@@ -50,11 +49,11 @@ private:
     const String HTTP_SCRIPT = "<script>function c(l){document.getElementById('s').value=l.innerText||l.textContent;document.getElementById('p').focus();}</script>";
     const String HTTP_HEAD_END = "</head><body>";
     const String HTTP_ITEM = "<div><a href='#' onclick='c(this)'>{v}</a></div>";
-    const String HTTP_FORM = "<form method='get' action='s'><input id='s' name='ssid' length=32 placeholder='SSID'><input id='p' name='pass' length=64 placeholder='password'><br/><input type='submit'></form>";
+    const String HTTP_FORM = "<form method='get' action='s'><input id='s' name='ssid' length=32 placeholder='SSID'><input id='p' name='pass' length=64 placeholder='password'><input type='hidden' name='key' value='$key' ><br/><input type='submit'></form>";
     const String HTTP_END = "</body></html>";
     
     const char* _apName = "no-net";
-
+    const char *_pPass = "";
     void drawSpinner(int count, int active);
 };
 
