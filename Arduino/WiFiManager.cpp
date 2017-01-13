@@ -20,12 +20,9 @@ WiFiManager::WiFiManager()
 {
 }
 
-void WiFiManager::autoConnect() {
-    autoConnect("NoNetESP");
-}
-
-void WiFiManager::autoConnect(char const *apName) {
+void WiFiManager::autoConnect(char const *apName, const char *pPass) {
     _apName = apName;
+    _pPass = pPass;
 
 //  DEBUG_PRINT("");
 //    DEBUG_PRINT("AutoConnect");
@@ -54,6 +51,7 @@ void WiFiManager::autoConnect(char const *apName) {
 
   if (!MDNS.begin(apName))
     DEBUG_PRINT("Error setting up MDNS responder!");
+  WiFi.scanNetworks();
 
   _timeout = true;
   _bCfg = true;
@@ -90,7 +88,7 @@ void WiFiManager::setPass(const char *p){
   strncpy(ee.szSSIDPassword, p, sizeof(ee.szSSIDPassword) );
   eemem.update();
   DEBUG_PRINT("Updated EEPROM.  Restaring.");
-  autoConnect(_apName);
+  autoConnect(_apName, _pPass);
 }
 
 void WiFiManager::seconds(void) {
@@ -112,7 +110,7 @@ void WiFiManager::seconds(void) {
     if(WiFi.SSID(i) == ee.szSSID) // found cfg SSID
     {
       DEBUG_PRINT("SSID found.  Restarting.");
-      autoConnect(_apName);
+      autoConnect(_apName, _pPass);
       s = 5; // set to 5 seconds in case it fails again
     }
   }
@@ -133,8 +131,10 @@ String WiFiManager::page()
     item.replace("{v}", WiFi.SSID(i) );
     s += item;
   }
-  
-  s += HTTP_FORM;
+  WiFi.scanDelete();
+  String form = HTTP_FORM;
+  form.replace("$key", _pPass );
+  s += form;
   s += HTTP_END;
   
   _timeout = false;
