@@ -21,7 +21,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-// Build with Arduino IDE 1.6.11, esp8266 SDK >2.3.0 (git repo 9/20/2016+)
+// Build with Arduino IDE 1.8.1, esp8266 SDK >2.3.0 (git repo 9/20/2016+)
+
+//uncomment to enable Arduino IDE Over The Air update code
+#define OTA_ENABLE
 
 #include <Wire.h>
 #include "icons.h"
@@ -32,6 +35,11 @@ SOFTWARE.
 #include <ESP8266mDNS.h>
 #include "WiFiManager.h"
 #include <ESPAsyncWebServer.h> // https://github.com/me-no-dev/ESPAsyncWebServer
+
+#ifdef OTA_ENABLE
+#include <FS.h>
+#include <ArduinoOTA.h>
+#endif
 
 #include <JsonClient.h> // https://github.com/CuriousTech/ESP8266-HVAC/tree/master/Libraries/JsonClient
 #include "PushBullet.h"
@@ -120,7 +128,7 @@ void parseParams(AsyncWebServerRequest *request)
   bool bRemote = false;
   bool ipSet = false;
 
-  //Serial.println("parseParams");
+  Serial.println("parseParams");
 
   if(request->params() == 0)
     return;
@@ -569,6 +577,8 @@ void pirISR()
 
 void setup()
 {
+  const char doorbell[]="Doorbell";
+
   pinMode(ESP_LED, OUTPUT);
   pinMode(DOORBELL, INPUT_PULLUP);
   attachInterrupt(DOORBELL, doorbellISR, FALLING);
@@ -583,12 +593,12 @@ void setup()
   Serial.begin(115200);
 //  Serial.setDebugOutput(true);
   Serial.println();
-  WiFi.hostname("doorbell");
-  wifi.autoConnect("Doorbell", controlPassword);
+  WiFi.hostname(doorbell);
+  wifi.autoConnect(doorbell, controlPassword);
 
-  if(wifi.isCfg())
+  if(!wifi.isCfg())
   {
-    if ( !MDNS.begin ( "doorbell" ) )
+    if ( !MDNS.begin ( doorbell ) )
       Serial.println ( "MDNS responder error" );
   }
 
@@ -659,6 +669,10 @@ void setup()
 
   MDNS.addService("http", "tcp", serverPort);
 
+#ifdef OTA_ENABLE
+  ArduinoOTA.begin();
+#endif
+
   configTime(-5 * 3600, 0, "pool.ntp.org", "time.nist.gov");
 
   if(!wifi.isCfg())
@@ -669,12 +683,15 @@ int8_t msgCnt;
 
 void loop()
 {
-  static uint8_t hour_save, sec_save, min_save;
+  static uint8_t sec_save, min_save;
   static uint8_t wuMins = 11;
   static uint8_t wuCall = 0;
   static bool bPulseLED = false;
 
   MDNS.update();
+#ifdef OTA_ENABLE
+  ArduinoOTA.handle();
+#endif
 
   if(bPirTriggered)
   {
@@ -714,7 +731,7 @@ void loop()
 
       if(ee.location[0] && --wuMins == 0) // call wunderground API
       {
-        switch(++wuCall) // put a list of wu callers here
+        switch(wuCall++) // put a list of wu callers here
         {
           case 0:
             if(ee.bEnableOLED == false)
@@ -745,9 +762,8 @@ void loop()
         wuMins = 10; // free account has a max of 10 per minute, 500 per day (every 3 minutes)
       }
 
-      if (hour_save != hour()) // hourly stuff
+      if (min_save == 0) // hourly stuff
       {
-        hour_save = hour();
         eemem.update(); // update EEPROM if needed
       }
     }
@@ -794,14 +810,8 @@ void loop()
   if(minute() != last_min) // alternate the display to prevent burn
   {
     last_min = minute();
-    if(iconX)
-    {
-      iconX = 0;      infoX = 64;
-    }
-    else
-    {
-      infoX = 0;      iconX = 64;
-    }
+    if(iconX){ iconX = 0;   infoX = 64; }
+    else     { infoX = 0;   iconX = 64; }
   }
   
   // draw the screen here
@@ -985,9 +995,9 @@ const char *jsonList1[] = { "",
   "type",             // 17
   "description",
   "expires_epoch",
-  "message",
-  "phenomena", // 5  //: "HT" "SP"
-  "significance", //: "Y" "S"
+  "message",          // 20
+  "phenomena",        //: "HT" "SP"
+  "significance",     //: "Y" "S"
   "error",
   NULL
 };
@@ -998,14 +1008,7 @@ void wuCondCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
 
   if(iEvent == -1) // connection events
     return;
-/*
-  Serial.print("cb ");
-  Serial.print(iEvent);
-  Serial.print(" ");
-  Serial.print(iName);
-  Serial.print(" ");
-  Serial.println(strlen(psValue));
-*/
+
   switch(iName)
   {
     case 0:
@@ -1072,7 +1075,11 @@ void wuCondCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
     case 20: // message (too long to watch on the scroller)
       events.send(psValue, "alert");
       break;
-    case 21: // error (like a bad key or url)
+    case 21: // phenomena
+      break;
+    case 22: // significance
+      break;
+    case 23: // error (like a bad key or url)
       events.send(psValue, "alert");
       break;
   }
@@ -1092,8 +1099,6 @@ void wuConditions(bool bAlerts)
   path += ee.location;
   path += ".json";
 
-//  char sz[64];
-//  path.toCharArray(sz, sizeof(sz));
   wuClient.begin("api.wunderground.com", path.c_str(), 80, false);
   path = String();
   wuClient.addList(jsonList1);
@@ -1129,7 +1134,6 @@ const alert2icon data[] = {
 
 void alertIcon(char *p)
 {
-
   for(int i = 0; data[i].name[0]; i++)
   {
     if(!strcmp(p, data[i].name))
