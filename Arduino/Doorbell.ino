@@ -115,7 +115,7 @@ String dataJson() // timed/instant pushed data
 }
 
 void wuCondCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
-JsonClient wuClient(wuCondCallback);
+JsonClient wuClient(wuCondCallback, 3200);
 void wuConditions(bool bAlerts);
 void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
 JsonClient jsonParse(jsonCallback);
@@ -462,7 +462,7 @@ void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventT
     case WS_EVT_CONNECT:      //client connected
       if(bReset)
       {
-        client->printf("alert;restarted");
+        client->printf("alert;Restarted");
         bReset = false;
       }
       client->printf("state;%s", dataJson().c_str());
@@ -496,8 +496,9 @@ void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventT
 static int ssCnt = 10;
 void sendState()
 {
-  events.send(dataJson().c_str(), "state"); // instant update on the web page
-  ws.printfAll("state;%s", dataJson().c_str());
+  String s = dataJson();
+  events.send(s.c_str(), "state"); // instant update on the web page
+  ws.textAll(String("state;") + s);
   ssCnt = 20-( second() % 10);
 }
 
@@ -516,10 +517,10 @@ void doorBell()
 
   String s = "Doorbell "  + timeToTxt( doorbellTimes[doorbellTimeIdx]);
   events.send(s.c_str(), "alert" );
-  ws.printfAll("alert;%s", s.c_str());
+  ws.textAll(String("alert;") + s);
   s = String();
   sendState();
-  // make sure it's more than 5 mins between triggers to send a PB
+  // make sure it's more than 3 mins between triggers to send a PB
   if( newtime - dbTime > 3 * 60)
   {
     if(ee.bEnablePB[0])
@@ -626,7 +627,7 @@ void setup()
 
   server.onNotFound([](AsyncWebServerRequest *request){ // root and exploits will be called here with *no response* sent back
     //Handle Unknown Request
-    reportReq(request);
+    reportReq(request);  // Remove if you don't want all kinds of traffic from hacker attempts
 //    request->send(404);
   });
 
