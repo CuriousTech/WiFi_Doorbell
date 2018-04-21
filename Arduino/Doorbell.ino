@@ -21,7 +21,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-// Build with Arduino IDE 1.8.1, esp8266 SDK >2.3.0 (git repo 9/20/2016+)
+// Build with Arduino IDE 1.8.5, esp8266 SDK 2.4.1
 
 //uncomment to enable Arduino IDE Over The Air update code
 #define OTA_ENABLE
@@ -119,6 +119,7 @@ JsonClient wuClient(wuCondCallback, 3200);
 void wuConditions(bool bAlerts);
 void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
 JsonClient jsonParse(jsonCallback);
+JsonClient jsNotif(jsonCallback);
 
 void parseParams(AsyncWebServerRequest *request)
 {
@@ -196,13 +197,17 @@ void parseParams(AsyncWebServerRequest *request)
           if(doorbellTimeIdx)
             doorbellTimeIdx = 0;
           else
+          {
             alert_expire = 0; // clear the alert
+            szAlertDescription[0] = 0;
+          }
           break;
       case 'L': // location
           s.toCharArray(ee.location, sizeof(ee.location));
           break;
       case 'm':  // message
           alert_expire = 0; // also clears the alert
+          szAlertDescription[0] = 0;
           sMessage = p->value();
           if(ee.bEnableOLED == false && sMessage.length())
           {
@@ -223,6 +228,20 @@ void parseParams(AsyncWebServerRequest *request)
           break;
       case 'p': // pass
           wifi.setPass(s.c_str());
+          break;
+      case 'n': // notifier   /s?key=password&ni="192.168.0.102"&np="/test"&no=82
+          switch(p->name().charAt(1))
+          {
+            case 'i': // ni=
+              strncpy(ee.szNotifIP, s.c_str(), sizeof(ee.szNotifIP));
+              break;
+            case 'p': // np=
+              strncpy(ee.szNotifPath, s.c_str(), sizeof(ee.szNotifPath));
+              break;
+            case 'o': // no=
+              ee.NotifPort = atoi(s.c_str());
+              break;
+          }
           break;
     }
   }
@@ -269,7 +288,7 @@ String timeToTxt(unsigned long &t)  // GMT to string "Sun 12:00:00 AM"
 
 void reportReq(AsyncWebServerRequest *request) // report full request to PC
 {
-  String s = "{\"remote\":\"";
+  String s = "request;{\"remote\":\"";
   s += request->client()->remoteIP().toString();
   s += "\",\"method\":\"";
   switch(request->method())
@@ -336,7 +355,8 @@ void reportReq(AsyncWebServerRequest *request) // report full request to PC
     s += "]";
   }
   s +="}";
-  events.send(s.c_str(), "request");
+//  events.send(s.c_str(), "request");
+  ws.textAll(s);
   s = String();
 }
 
@@ -348,6 +368,13 @@ void handleS(AsyncWebServerRequest *request)
   page += WiFi.localIP().toString();
   page += ":";
   page += serverPort;
+/*
+  page += "\",notif:\"";
+  page += ee.szNotifIP;
+  page += ":";
+  page += ee.NotifPort;
+  page += ee.szNotifPath;
+*/
   page += "\"}";
   request->send( 200, "text/json", page );
   reportReq(request);
@@ -379,6 +406,7 @@ void handleJson(AsyncWebServerRequest *request)
 
 void onEvents(AsyncEventSourceClient *client)
 {
+  Serial.println("onEvents");
   static bool rebooted = true;
   if(rebooted)
   {
@@ -423,7 +451,10 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
             sendState();
           }
           else
+          {
             alert_expire = 0; // clear the alert
+            szAlertDescription[0] = 0;
+          }
           break;
         case 2: // pbdb
           ee.bEnablePB[0] = iValue;
@@ -439,6 +470,7 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
           break;
         case 6: // msg
           alert_expire = 0; // also clears the alert
+          szAlertDescription[0] = 0;
           sMessage = psValue;
           if(ee.bEnableOLED == false && sMessage.length())
           {
@@ -493,13 +525,14 @@ void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventT
   }
 }
 
-static int ssCnt = 10;
+static int ssCnt = 30;
 void sendState()
 {
   String s = dataJson();
   events.send(s.c_str(), "state"); // instant update on the web page
   ws.textAll(String("state;") + s);
-  ssCnt = 20-( second() % 10);
+  ssCnt = 59 - second();
+  if(ssCnt < 20) ssCnt = 59;
 }
 
 // called when doorbell rings (or test)
@@ -515,11 +548,13 @@ void doorBell()
 
   doorbellTimes[doorbellTimeIdx] = newtime;
 
-  String s = "Doorbell "  + timeToTxt( doorbellTimes[doorbellTimeIdx]);
+  String s = "Doorbell " + timeToTxt( doorbellTimes[doorbellTimeIdx]);
   events.send(s.c_str(), "alert" );
   ws.textAll(String("alert;") + s);
   s = String();
   sendState();
+  if(ee.szNotifIP[0])
+    jsNotif.begin(ee.szNotifIP, ee.szNotifPath, ee.NotifPort, false);
   // make sure it's more than 3 mins between triggers to send a PB
   if( newtime - dbTime > 3 * 60)
   {
@@ -578,7 +613,7 @@ void pirISR()
 
 void setup()
 {
-  const char doorbell[]="Doorbell";
+  const char doorbell[] = "Doorbell";
 
   pinMode(ESP_LED, OUTPUT);
   pinMode(DOORBELL, INPUT_PULLUP);
@@ -603,12 +638,12 @@ void setup()
       Serial.println ( "MDNS responder error" );
   }
 
-  // attach AsyncEventSource
-  events.onConnect(onEvents);
-  server.addHandler(&events);
   // attach AsyncWebSocket
   ws.onEvent(onWsEvent);
   server.addHandler(&ws);
+  // attach AsyncEventSource
+  events.onConnect(onEvents);
+  server.addHandler(&events);
 
   server.on ( "/", HTTP_GET | HTTP_POST, [](AsyncWebServerRequest *request){ // main page (avoids call from root)
     if(wifi.isCfg())
@@ -660,6 +695,11 @@ void setup()
   server.on("/heap", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send(200, "text/plain", String(ESP.getFreeHeap()));
   });
+  server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request){
+    AsyncWebServerResponse *response = request->beginResponse_P(200, "image/x-icon", favicon, sizeof(favicon));
+    response->addHeader("Content-Encoding", "gzip");
+    request->send(response);
+  });
   server.onFileUpload([](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final){
   });
   server.onRequestBody([](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
@@ -677,7 +717,7 @@ void setup()
   configTime(-5 * 3600, 0, "pool.ntp.org", "time.nist.gov");
 
   if(!wifi.isCfg())
-    wuConditions(false);
+    wuConditions(false); // Note: Call at startup. This can cause you to lose a raindrop if you get into watchdog resets.
 }
 
 int8_t msgCnt;
@@ -718,9 +758,18 @@ void loop()
   {
     sec_save = second();
 
+//    Serial.println("event clients = " + events.count() );
+
+    static int8_t evKA = 20; // event keepalive
     if(--ssCnt == 0) // heartbeat I guess
     {
+      evKA = 20;
       sendState();
+    }
+    else if(--evKA == 0)
+    {
+      evKA = 20;
+      events.send("", ""); // just blank
     }
 
     if(min_save != minute())
@@ -740,7 +789,7 @@ void loop()
               if(--condCnt == 0) // get conditions and time every hour when display is off
               {
                 bGetCond = true;
-                condCnt = 6;
+                condCnt = 5; // 5 alerts per hour (at 10 mins)
               }
             }
             else
@@ -750,13 +799,12 @@ void loop()
 
             if(bGetCond)
             {
-              wuConditions(false);
+              wuConditions(false);  // conditions
               break;
             } // fall through if not getting conditions (checks alerts every 10 mins)
           case 1:
-            wuConditions(true);
-            break;
           default:
+            wuConditions(true);  // alerts
             wuCall = 0;
             break;
         }
@@ -766,6 +814,13 @@ void loop()
       if (min_save == 0) // hourly stuff
       {
         eemem.update(); // update EEPROM if needed
+        unsigned long t = now() - (3600 * TZ);
+        if(doorbellTimeIdx && doorbellTimes[0] < t - (3600 * 24 *7) ) // 1 week old
+        {
+          doorbellTimeIdx--;
+          if(doorbellTimeIdx)
+            memcpy(doorbellTimes, &doorbellTimes[doorbellTimeIdx], sizeof(unsigned long) * (DB_CNT-doorbellTimeIdx) );
+        }
       }
     }
 
@@ -783,7 +838,10 @@ void loop()
       nWrongPass--;
 
     if(alert_expire && alert_expire < now()) // if active alert
+    {
       alert_expire = 0;
+      szAlertDescription[0] = 0;
+    }
 
     if(bPulseLED)
     {
