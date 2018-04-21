@@ -15,7 +15,9 @@ struct eeSet // EEPROM backed data
   bool    bMotion;        // motion activated clear
   char    pbToken[40];    // 34
   char    wuKey[20];      // 16
-  char    reserved[64];
+  char    szNotifIP[16];
+  char    szNotifPath[44];
+  uint16_t NotifPort;
 };
 
 class eeMem
