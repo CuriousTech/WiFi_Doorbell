@@ -10,9 +10,11 @@ eeSet ee = { sizeof(eeSet), 0xAAAA,
   {false, false},  // Enable pushbullet
   true,   // Enable OLED
   false,
-  "pushbullet token",
-  "wunderground key",
-  ""
+  "pushbullet token", // PushBullet token
+  "wundergroundkey", // wunderground key
+  "192.168.0.104", // szNotifIP
+  "/s?key=password&f=1200&b=1000", // szNotifPath (another ESP with a beeper (waterbed))
+  82 // NotifPort
 };
 
 eeMem::eeMem()
