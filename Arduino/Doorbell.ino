@@ -488,16 +488,18 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
 void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventType type, void * arg, uint8_t *data, size_t len)
 {  //Handle WebSocket event
   static bool bReset = true;
+  String s;
 
   switch(type)
   {
     case WS_EVT_CONNECT:      //client connected
       if(bReset)
       {
-        client->printf("alert;Restarted");
+        client->text("alert;Restarted");
         bReset = false;
       }
-      client->printf("state;%s", dataJson().c_str());
+      s = String("state;") + dataJson().c_str();
+      client->text(s);
       client->ping();
       break;
     case WS_EVT_DISCONNECT:    //client disconnected
