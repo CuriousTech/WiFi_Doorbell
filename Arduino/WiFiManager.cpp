@@ -64,7 +64,7 @@ boolean WiFiManager::hasConnected(void)
     if (WiFi.status() == WL_CONNECTED)
       return true;
     delay(200);
-    Serial.print(".");
+//    Serial.print(".");
     display.clear();
     display.drawXbm(34,10, 60, 36, WiFi_Logo_bits);
     display.setColor(INVERSE);
