@@ -35,13 +35,14 @@ SOFTWARE.
 #include <ESP8266mDNS.h>
 #include "WiFiManager.h"
 #include <ESPAsyncWebServer.h> // https://github.com/me-no-dev/ESPAsyncWebServer
+#include <UdpTime.h> // https://github.com/CuriousTech/ESP07_WiFiGarageDoor/tree/master/libraries/UdpTime
 
 #ifdef OTA_ENABLE
 #include <FS.h>
 #include <ArduinoOTA.h>
 #endif
 
-#include <JsonClient.h> // https://github.com/CuriousTech/ESP8266-HVAC/tree/master/Libraries/JsonClient
+#include <JsonClient.h> // https://github.com/CuriousTech/WiFi_Doorbell/tree/master/Libraries/jsonClient
 #include "PushBullet.h"
 #include "eeMem.h"
 #include "pages.h"
@@ -57,17 +58,23 @@ int serverPort = 80; // port to access this device
 
 IPAddress lastIP;
 int nWrongPass;
+UdpTime utime;
 
-const char *pIcon = icon11;
-const char *pAlertIcon = pubAnn;
-char szWeatherCond[32] = "NA"; // short description
-char szWind[32] = "NA";        // Wind direction (SSW, NWN...) and speed
-char szAlertDescription[64];   // Severe Thunderstorm Warning, Dense Fog, etc.
-unsigned long alert_expire;   // epoch of alert sell by date
-float TempF;
-int rh;
-int8_t TZ;
-int8_t DST;  // TZ includes DST
+const char *pIcon[4] ={icon11,NULL};
+uint16_t nWeatherID[4];
+char szWeather[4][32] = {"NA"}; // short description
+char szWeatherLoc[32];
+char szWeatherDesc[4][64];   // Severe Thunderstorm Warning, Dense Fog, etc.
+float fTemp;
+float fTempMin;
+float fTempMax;
+uint8_t rh;
+uint16_t bp;
+uint8_t nCloud;
+float fWindSpeed;
+uint16_t windDeg;
+float fWindGust;
+bool bStartOLED;
 
 #define DB_CNT 16
 int doorbellTimeIdx = 0;
@@ -82,28 +89,48 @@ String sMessage;
 
 WiFiManager wifi;  // AP page:  192.168.4.1
 AsyncWebServer server( serverPort );
-AsyncEventSource events("/events"); // event source (Server-Sent events)
 AsyncWebSocket ws("/ws"); // access at ws://[esp ip]/ws
 
 PushBullet pb;
 
 eeMem eemem;
 
+void sendState(void);
+void Scroller(String s);
+void convertIcon(uint8_t ni, bool bNight);
+// WebSocket
+void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
+JsonClient jsonParse(jsonCallback);
+JsonClient jsNotif(jsonCallback); // notifier (push to another device)
+
+// OpenWeatherMap api
+void owCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
+JsonClient owClient(owCallback, 2200);
+void innerCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
+JsonClient innerParse(innerCallback, 1200);
+void owCall(void);
+
 String dataJson() // timed/instant pushed data
 {
   String s = "{";
-  s += "\"t\":";  s += ( now() - (TZ * 3600) );
-  s += ",\"weather\":\""; s += szWeatherCond;
+  s += "\"t\":";  s += ( now() - ((ee.tz + utime.getDST()) * 3600) );
+  s += ",\"tz\":"; s += ee.tz;
+  s += ",\"weather\":\"";
+  for(int i = 0; szWeather[i][0] && i < 4; i++)
+  {
+    if(i) s += ",";
+    s += szWeather[i];
+  }
   s += "\",\"pir\":";  s += pirTime;
   s += ",\"bellCount\":"; s += doorbellTimeIdx;
   s += ",\"o\":"; s += ee.bEnableOLED;
   s += ",\"pbdb\":"; s += ee.bEnablePB[0];
   s += ",\"pbm\":"; s += ee.bEnablePB[1];
   s += ",\"loc\":";  s += ee.location;
-  s += ",\"alert\":\""; s += szAlertDescription; s += "\"";
-  s += ",\"temp\":\""; s += String(TempF,1); s += "\"";
+  s += ",\"alert\":\""; s += szWeatherDesc[0]; s += "\"";
+  s += ",\"temp\":\""; s += String(fTemp,1); s += "\"";
   s += ",\"rh\":\""; s += rh; s += "\"";
-  s += ",\"wind\":\""; s += szWind; s += "\"";
+  s += ",\"wind\":\""; s += String(fWindSpeed,1) + " "; s += windDeg; s += "deg\"";
   s += ",\"db\":[";
   for(int i = 0; i < DB_CNT; i++)
   {
@@ -114,13 +141,6 @@ String dataJson() // timed/instant pushed data
   return s;
 }
 
-void wuCondCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
-JsonClient wuClient(wuCondCallback, 3200);
-void wuConditions(bool bAlerts);
-void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
-JsonClient jsonParse(jsonCallback);
-JsonClient jsNotif(jsonCallback);
-
 void parseParams(AsyncWebServerRequest *request)
 {
   char temp[100];
@@ -128,8 +148,6 @@ void parseParams(AsyncWebServerRequest *request)
   int val;
   bool bRemote = false;
   bool ipSet = false;
-
-  Serial.println("parseParams");
 
   if(request->params() == 0)
     return;
@@ -159,12 +177,12 @@ void parseParams(AsyncWebServerRequest *request)
       nWrongPass <<= 1;
     if(ip != lastIP)  // if different IP drop it down
        nWrongPass = 10;
-    String data = "{\"ip\":\"";
+    String data = "hack;{\"ip\":\"";
     data += request->client()->remoteIP().toString();
     data += "\",\"pass\":\"";
     data += password; // a String object here adds a NULL.  Possible bug in SDK
     data += "\"}";
-    events.send(data.c_str(), "hack" ); // log attempts
+    ws.textAll(data);
     data = String();
     lastIP = ip;
     return;
@@ -183,6 +201,7 @@ void parseParams(AsyncWebServerRequest *request)
     {
       case 'O': // OLED
           ee.bEnableOLED = bValue;
+          if(bValue) bStartOLED = true;
           break;
       case 'P': // PushBullet
           {
@@ -196,32 +215,22 @@ void parseParams(AsyncWebServerRequest *request)
       case 'R': // reset
           if(doorbellTimeIdx)
             doorbellTimeIdx = 0;
-          else
-          {
-            alert_expire = 0; // clear the alert
-            szAlertDescription[0] = 0;
-          }
           break;
       case 'L': // location
           s.toCharArray(ee.location, sizeof(ee.location));
           break;
       case 'm':  // message
-          alert_expire = 0; // also clears the alert
-          szAlertDescription[0] = 0;
           sMessage = p->value();
           if(ee.bEnableOLED == false && sMessage.length())
           {
             displayOnTimer = 60;
           }
           break;
-      case 'w': // wunderground key
-          s.toCharArray(ee.wuKey, sizeof(ee.wuKey));
+      case 'w': // openweathermap key
+          s.toCharArray(ee.owKey, sizeof(ee.owKey));
           break;
       case 'b': // pushbullet token
           s.toCharArray(ee.pbToken, sizeof(ee.pbToken));
-          break;
-      case 't': // test
-          doorBell();
           break;
       case 's': // ssid
           s.toCharArray(ee.szSSID, sizeof(ee.szSSID));
@@ -267,7 +276,7 @@ String timeFmt()
 String timeToTxt(unsigned long &t)  // GMT to string "Sun 12:00:00 AM"
 {
   tmElements_t tm;
-  breakTime(t + (3600 * TZ), tm);
+  breakTime(t + (3600 * (ee.tz + utime.getDST())), tm);
  
   String s = dayShortStr(tm.Wday);
   s += " ";
@@ -368,13 +377,6 @@ void handleS(AsyncWebServerRequest *request)
   page += WiFi.localIP().toString();
   page += ":";
   page += serverPort;
-/*
-  page += "\",notif:\"";
-  page += ee.szNotifIP;
-  page += ":";
-  page += ee.NotifPort;
-  page += ee.szNotifPath;
-*/
   page += "\"}";
   request->send( 200, "text/json", page );
   reportReq(request);
@@ -384,14 +386,14 @@ void handleS(AsyncWebServerRequest *request)
 // JSON format for initial or full data read
 void handleJson(AsyncWebServerRequest *request)
 {
-  String s = "{\"";
-  s += "weather\": \""; s += szWeatherCond;
+  String s = "{";
+  s += "\"weather\": \""; s += szWeather[0];
   s += "\",\"location\": \""; s += ee.location;
   s += "\",\"bellCount\": "; s += doorbellTimeIdx;
   s += ",\"display\": "; s += ee.bEnableOLED;
-  s += ",\"temp\": \""; s += String(TempF,1);
+  s += ",\"temp\": \""; s += String(fTemp,1);
   s += "\",\"rh\": "; s += rh;
-  s += ",\"time\": "; s += ( now() - (TZ * 3600) );
+  s += ",\"time\": "; s += ( now() - ((ee.tz + utime.getDST()) * 3600) );
   s += ",\"pir\": "; s += pirTime;
   s += ",\"t\":[";
   for(int i = 0; i < DB_CNT; i++)
@@ -404,18 +406,6 @@ void handleJson(AsyncWebServerRequest *request)
   s = String();
 }
 
-void onEvents(AsyncEventSourceClient *client)
-{
-  Serial.println("onEvents");
-  static bool rebooted = true;
-  if(rebooted)
-  {
-    rebooted = false;
-    events.send("Restarted", "alert");
-  }
-  sendState();
-}
-
 const char *jsonListCmd[] = { "cmd", // WebSocket command list
   "key",
   "reset",
@@ -425,6 +415,7 @@ const char *jsonListCmd[] = { "cmd", // WebSocket command list
   "oled",
   "msg", // message
   "loc", // location
+  "TZ",
   NULL
 };
 
@@ -450,11 +441,6 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
             memset(doorbellTimes, 0, sizeof(doorbellTimes));
             sendState();
           }
-          else
-          {
-            alert_expire = 0; // clear the alert
-            szAlertDescription[0] = 0;
-          }
           break;
         case 2: // pbdb
           ee.bEnablePB[0] = iValue;
@@ -467,10 +453,9 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
           break;
         case 5: // OLED
           ee.bEnableOLED = iValue ? true:false;
+          if(iValue) bStartOLED = true;
           break;
         case 6: // msg
-          alert_expire = 0; // also clears the alert
-          szAlertDescription[0] = 0;
           sMessage = psValue;
           if(ee.bEnableOLED == false && sMessage.length())
           {
@@ -479,6 +464,10 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
           break;
         case 7: // loc
           strncpy(ee.location, psValue, sizeof(ee.location));
+          break;
+        case 8: // TZ
+          ee.tz = iValue;
+          utime.start();
           break;
       }
       break;
@@ -531,7 +520,6 @@ static int ssCnt = 30;
 void sendState()
 {
   String s = dataJson();
-  events.send(s.c_str(), "state"); // instant update on the web page
   ws.textAll(String("state;") + s);
   ssCnt = 59 - second();
   if(ssCnt < 20) ssCnt = 59;
@@ -543,7 +531,7 @@ void doorBell()
   if(dbTime == 0) // date isn't set yet
     return;
 
-  unsigned long newtime = now() - (3600 * TZ);
+  unsigned long newtime = now() - (3600 * (ee.tz + utime.getDST()));
 
   if( newtime - dbTime < 10) // ignore bounces and double taps
     return;
@@ -551,7 +539,6 @@ void doorBell()
   doorbellTimes[doorbellTimeIdx] = newtime;
 
   String s = "Doorbell " + timeToTxt( doorbellTimes[doorbellTimeIdx]);
-  events.send(s.c_str(), "alert" );
   ws.textAll(String("alert;") + s);
   s = String();
   sendState();
@@ -581,13 +568,13 @@ void motion()
     return;
 
 //  Serial.println("Motion");
-  unsigned long newtime = now() - (3600 * TZ);
+  unsigned long newtime = now() - (3600 * (ee.tz + utime.getDST()));
 
   if( newtime - pirTime < 30) // limit triggers
     return;
 
-  String s = "Motion " + timeToTxt( newtime );
-  events.send(s.c_str(), "alert" );
+  String s = String("alert;Motion ") + timeToTxt( newtime );
+  ws.textAll(s);
   s = String();
   sendState();
   // make sure it's more than 3 mins between triggers to send a PB
@@ -616,6 +603,8 @@ void pirISR()
 void setup()
 {
   const char doorbell[] = "Doorbell";
+  Serial.begin(115200);
+  Serial.println();
 
   pinMode(ESP_LED, OUTPUT);
   pinMode(DOORBELL, INPUT_PULLUP);
@@ -628,9 +617,6 @@ void setup()
   display.clear();
   display.display();
 
-  Serial.begin(115200);
-//  Serial.setDebugOutput(true);
-  Serial.println();
   WiFi.hostname(doorbell);
   wifi.autoConnect(doorbell, controlPassword);
 
@@ -643,9 +629,6 @@ void setup()
   // attach AsyncWebSocket
   ws.onEvent(onWsEvent);
   server.addHandler(&ws);
-  // attach AsyncEventSource
-  events.onConnect(onEvents);
-  server.addHandler(&events);
 
   server.on ( "/", HTTP_GET | HTTP_POST, [](AsyncWebServerRequest *request){ // main page (avoids call from root)
     if(wifi.isCfg())
@@ -715,26 +698,23 @@ void setup()
 #ifdef OTA_ENABLE
   ArduinoOTA.begin();
 #endif
-
-  configTime(-5 * 3600, 0, "pool.ntp.org", "time.nist.gov");
-
-  if(!wifi.isCfg())
-    wuConditions(false); // Note: Call at startup. This can cause you to lose a raindrop if you get into watchdog resets.
+  if(wifi.isCfg() == false)
+    utime.start();
 }
 
 int8_t msgCnt;
 
 void loop()
 {
-  static uint8_t sec_save, min_save;
-  static uint8_t wuMins = 11;
-  static uint8_t wuCall = 0;
+  static uint8_t sec_save, min_save, hour_save;
   static bool bPulseLED = false;
 
   MDNS.update();
 #ifdef OTA_ENABLE
   ArduinoOTA.handle();
 #endif
+  if(!wifi.isCfg())
+    utime.check(ee.tz);
 
   if(bPirTriggered)
   {
@@ -760,69 +740,36 @@ void loop()
   {
     sec_save = second();
 
-//    Serial.println("event clients = " + events.count() );
-
-    static int8_t evKA = 20; // event keepalive
     if(--ssCnt == 0) // heartbeat I guess
     {
-      evKA = 20;
       sendState();
-    }
-    else if(--evKA == 0)
-    {
-      evKA = 20;
-      events.send("", ""); // just blank
     }
 
     if(min_save != minute())
     {
       min_save = minute();
 
-      static int8_t condCnt = 6;
-      bool bGetCond = false;
-
-      if(ee.location[0] && --wuMins == 0) // call wunderground API
+      if (hour_save != hour())  // update our time daily (at 2AM for DST)
       {
-        switch(wuCall++) // put a list of wu callers here
-        {
-          case 0:
-            if(ee.bEnableOLED == false)
-            {
-              if(--condCnt == 0) // get conditions and time every hour when display is off
-              {
-                bGetCond = true;
-                condCnt = 5; // 5 alerts per hour (at 10 mins)
-              }
-            }
-            else
-            {
-              bGetCond = true;
-            }
-
-            if(bGetCond)
-            {
-              wuConditions(false);  // conditions
-              break;
-            } // fall through if not getting conditions (checks alerts every 10 mins)
-          case 1:
-          default:
-            wuConditions(true);  // alerts
-            wuCall = 0;
-            break;
-        }
-        wuMins = 10; // free account has a max of 10 per minute, 500 per day (every 3 minutes)
+        if( (hour_save = hour()) == 2)
+          utime.start();
+        eemem.update(); // update EEPROM if needed while we're at it (give user time to make many adjustments)
       }
-
       if (min_save == 0) // hourly stuff
       {
-        eemem.update(); // update EEPROM if needed
-        unsigned long t = now() - (3600 * TZ);
+        unsigned long t = now() - (3600 * ee.tz);
         if(doorbellTimeIdx && doorbellTimes[0] < t - (3600 * 24 *7) ) // 1 week old
         {
           doorbellTimeIdx--;
           if(doorbellTimeIdx)
             memcpy(doorbellTimes, &doorbellTimes[doorbellTimeIdx], sizeof(unsigned long) * (DB_CNT-doorbellTimeIdx) );
         }
+      }
+      static uint8_t owCnt = 1;
+      if(--owCnt == 0)
+      {
+        owCnt = 5; // every 5 mins
+        owCall();
       }
     }
 
@@ -838,12 +785,6 @@ void loop()
 
     if(nWrongPass)
       nWrongPass--;
-
-    if(alert_expire && alert_expire < now()) // if active alert
-    {
-      alert_expire = 0;
-      szAlertDescription[0] = 0;
-    }
 
     if(bPulseLED)
     {
@@ -874,7 +815,7 @@ void loop()
     if(iconX){ iconX = 0;   infoX = 64; }
     else     { infoX = 0;   iconX = 64; }
   }
-  
+
   // draw the screen here
   display.clear();
 
@@ -883,18 +824,24 @@ void loop()
     last_blnk = millis();
     blnk = !blnk;
   }
-
-  if( (ee.bEnableOLED || displayOnTimer || alert_expire) && (bAutoClear == false)) // skip for motion enabled display
+  if(bStartOLED)
   {
-    if(alert_expire) // if there's an alert message
+    bStartOLED = false;
+    display.init();
+  }
+  if( (ee.bEnableOLED || displayOnTimer) && (bAutoClear == false)) // skip for motion enabled display
+  {
+    static uint8_t nIcon;
+    static uint8_t nSec;
+    if(nSec != second())
     {
-      sMessage = szAlertDescription; // set the scroller message
-      if(blnk) display.drawXbm(iconX+10, 20, 44, 42, pAlertIcon);
+      nSec != second();
+      nIcon = (nIcon + 1) & 3; // alternate multiple icons
+      if(pIcon[nIcon] == NULL)
+        nIcon = 0;
     }
-    else
-    {
-      display.drawXbm(iconX+10, 20, 44, 42, pIcon);
-    }
+
+    display.drawXbm(iconX+10, 20, 44, 42, pIcon[nIcon]);
   
     if(sMessage.length()) // message sent over wifi or alert
     {
@@ -915,13 +862,16 @@ void loop()
       s += " ";
       s += monthShortStr(month());
       s += "  ";
-      s += szWeatherCond;
-      s += "  ";
+      for(int i = 0; szWeather[i] && i < 4; i++)
+      {
+        s += szWeather[i];
+        s += "  ";
+      }
     }
     Scroller(s);
     s = String();
 
-    display.drawPropString(infoX, 23, String(TempF, 1) + "]" );
+    display.drawPropString(infoX, 23, String(fTemp, 1) + "]" );
     display.drawString(infoX + 20, 43, String(rh) + "%");
     if(blnk && doorbellTimeIdx) // blink small gauge if doorbell logged
     { // up to 64 pixels (128x64)
@@ -964,7 +914,7 @@ void Scroller(String s)
     if(++ind >= len) // reset at last char
     {
       ind = 0;
-      if(msgCnt && alert_expire == 0) // end of custom message display
+      if(msgCnt) // end of custom message display
       {
         if(--msgCnt == 0) // decrement times to repeat it
         {
@@ -975,231 +925,252 @@ void Scroller(String s)
   }
 }
 
-struct cond2icon
-{
-  const char *pName;
-  const char *pIcon;
-};
-const cond2icon cdata[] = { // row column from image at http://www.alessioatzeni.com/meteocons/
-  {"chanceflurries", icon72},// 0
-  {"chancerain", icon64},
-  {"chancesleet", icon44},
-  {"chancesnow", icon43},
-  {"chancetstorms", icon34},
-  {"clear",  icon54},// 5
-  {"cloudy", icon75},
-  {"flurries", icon73},
-  {"fog", icon31},
-  {"hazy", icon26},
-  {"mostlycloudy", icon62},// 10
-  {"mostlysunny", icon11},
-  {"partlycloudy", icon22},
-  {"partlysunny", icon56},
-  {"rain", icon65},
-  {"sleet", icon73},
-  {"snow", icon74},
-  {"sunny", icon54},
-  {"tstorms", icon53},
-
-  {"nt_chanceflurries", icon45},
-  {"nt_chancerain", icon35},
-  {"nt_chancesleet", icon42},
-  {"nt_chancesnow", icon44},
-  {"nt_chancetstorms", icon33},
-  {"nt_clear", icon13},
-  {"nt_cloudy", icon32},
-  {"nt_flurries", icon45},
-  {"nt_fog", icon26},
-  {"nt_hazy", icon25},
-  {"nt_mostlycloudy", icon32},
-  {"nt_mostlysunny", icon14},
-  {"nt_partlycloudy", icon23},
-  {"nt_partlysunny", icon23},
-  {"nt_rain", icon22},
-  {"nt_sleet", icon36},
-  {"nt_snow", icon46},
-  {"nt_sunny", icon56},
-  {"nt_tstorms", icon34},
-  {NULL, NULL}
-};
-
-void iconFromName(char *pName)
-{
-  for(int i = 0; cdata[i].pName; i++)
-    if(!strcmp(pName, cdata[i].pName))
-    {
-      pIcon = cdata[i].pIcon;
-      break;
-    }
-}
-
+///////////////
 // things we want from conditions request
-const char *jsonList1[] = { "",
-  "weather",           // 0
-  "temp_f",
-  "relative_humidity",
-  "wind_string",       //       Calm
-  "wind_dir",          //       East, ENE, SW
-  "wind_degrees",      // 5     0,45,90
-  "wind_mph",          //       n
-  "pressure_in",       //       nn.nn
-  "pressure_trend",    //       +/-
-  "dewpoint_f",        // 
-  "heat_index_string", // 10     NA
-  "windchill_string",  //        NA
-  "feelslike_f",       //        n.n
-  "local_epoch",       //        local no DST
-  "local_tz_short",
-  "local_tz_offset",  // 15     -0400
-  "icon",             // 16     name list
-  // alert names
-  "type",             // 17
-  "description",
-  "expires_epoch",
-  "message",          // 20
-  "phenomena",        //: "HT" "SP"
-  "significance",     //: "Y" "S"
-  "error",
+const char *jsonListOw[] = { "",
+  "weather",   // 0
+  "main",      // 
+  "wind",      //
+  "rain",
+  "snow",
+  "clouds",    //
+  "dt",        //
+  "sys",       //
+  "id",        //
+  "name",      //
+  "cod",      // 10
   NULL
 };
 
-void wuCondCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
-{
-  static unsigned long epoch;
+uint8_t nWeatherIdx;
 
+void owCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
+{
   if(iEvent == -1) // connection events
     return;
 
   switch(iName)
   {
-    case 0:
-      strncpy(szWeatherCond, psValue, sizeof(szWeatherCond));
-      events.send(psValue, "print");
+    case 0: // weather [{},{},{}] array
+      nWeatherIdx = 0;
+      memset(pIcon, 0, sizeof(pIcon));
+      memset(nWeatherID, 0, sizeof(nWeatherID));
+      memset(szWeather, 0, sizeof(szWeather));
+      memset(szWeatherDesc, 0, sizeof(szWeatherDesc));
+      innerParse.process("weather", psValue);
       break;
-    case 1:
-      TempF = atof(psValue);
+    case 1: // main
+      innerParse.process("main", psValue);
       break;
-    case 2:
-      rh = iValue;
+    case 2: // wind
+      innerParse.process("wind", psValue);
       break;
-    case 3:
-      strncpy(szWind, psValue, sizeof(szWind));
+    case 3: // rain
+      innerParse.process("rain", psValue);
       break;
-    case 4: // wind dir
+    case 4: // snow
+      innerParse.process("snow", psValue);
       break;
-    case 5: // wind deg
+    case 5: // clouds
+      innerParse.process("clouds", psValue);
       break;
-    case 6: // wind mph
+    case 6: // dt
+//      ws.textAll(String("print;dt ") + psValue);
       break;
-    case 7: // pressure in
+    case 7: // sys {"type":1,"id":1128,"message":0.0033,"country":"US","sunrise":1542284504,"sunset":1542320651}
+//      ws.textAll(String("print;sys ") + psValue);
       break;
-    case 8: // pressure trend
+    case 8: // id
       break;
-    case 9: // dewpoint F
+    case 9: // name
+      strncpy(szWeatherLoc, psValue, strlen(szWeatherLoc));
       break;
-    case 10: // heat index str
-      break;
-    case 11: // windchill str
-      break;
-    case 12: // feelslike F
-      break;
-    case 13: // local epoch
-      epoch = iValue;
-      break;
-    case 14: // local TZ short (DST)
-      DST = (psValue[1] == 'D') ? 1:0;
-      break;
-    case 15: // local TZ offset
-      TZ = (iValue / 100);
-      epoch += (3600 * TZ );
-      setTime(epoch);
-      if(dbTime == 0)
-        dbTime = pirTime = epoch - (3*60); // powerup setting
-      break;
-    case 16:
-      iconFromName(psValue);
-      break;
-// Alerts
-    case 17: // type (3 letter)
-      alertIcon(psValue);
-      break;
-    case 18: // description
-      strncpy(szAlertDescription, psValue, sizeof(szAlertDescription)-3 );
-      strcat(szAlertDescription, "  "); // separate end and start on scroller
-//      Serial.print("alert_desc ");
-//      Serial.println(szAlertDescription);
-      break;
-    case 19: // expires
-      alert_expire = iValue;
-      alert_expire += (3600 * TZ );
-      break;
-    case 20: // message (too long to watch on the scroller)
-      events.send(psValue, "alert");
-      break;
-    case 21: // phenomena
-      break;
-    case 22: // significance
-      break;
-    case 23: // error (like a bad key or url)
-      events.send(psValue, "alert");
+    case 10: // cod
+      if(iValue != 200)
+        ws.textAll(String("print;errcode ") + iValue);
       break;
   }
 }
 
-// Call wunderground for conditions or alerts
-void wuConditions(bool bAlerts)
-{
-  if(ee.location[0] == 0)
-    return;
-  String path = "/api/";
-  path += ee.wuKey;
-  if(bAlerts)
-    path += "/alerts/q/";
-  else
-    path += "/conditions/q/";
-  path += ee.location;
-  path += ".json";
+const char *jsonListWeather[] = { "weather",
+  "id",      // 0
+  "main",
+  "description",
+  "icon",
+  NULL
+};
+const char *jsonListMain[] = { "main",
+  "temp",      // 0
+  "pressure",
+  "humidity",
+  "temp_min",
+  "temp_max",
+  NULL
+};
+const char *jsonListWind[] = { "wind",
+  "speed",      // 0
+  "deg",
+  "gust",
+  NULL
+};
+const char *jsonListRain[] = { "rain",
+  "1h",      // 0
+  "3h",
+  NULL
+};
+const char *jsonListSnow[] = { "snow",
+  "1h",      // 0
+  "3h",
+  NULL
+};
+const char *jsonListClouds[] = { "clouds",
+  "all",      // 0
+  NULL
+};
 
-  wuClient.begin("api.wunderground.com", path.c_str(), 80, false);
-  path = String();
-  wuClient.addList(jsonList1);
+// Call OpenWeathermap API
+void owCall()
+{
+  String path = "/data/2.5/weather?id=";
+
+  path += ee.location;
+  path += "&APPID=";
+  path += ee.owKey;
+  path += "&units=imperial";
+
+  owClient.begin("api.openweathermap.org", path.c_str(), 80, false);
+  owClient.addList(jsonListOw);
+  static bool bAdded;
+  if(!bAdded){
+    innerParse.addList(jsonListWeather);
+    innerParse.addList(jsonListMain);
+    innerParse.addList(jsonListWind);
+    innerParse.addList(jsonListRain);
+    innerParse.addList(jsonListSnow);
+    innerParse.addList(jsonListClouds);
+    bAdded = true;
+  }
 }
 
-struct alert2icon
+void innerCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
 {
-  const char name[4];
-  const char *pIcon;
+  if(iEvent == -1) // connection events
+    return;
+
+  String s;
+
+  switch(iEvent)
+  {
+    case 0:// weather
+      switch(iName)
+      {
+        case 0: // id
+          nWeatherID[nWeatherIdx] = iValue;
+          break;
+        case 1: // main
+          strncpy(szWeather[nWeatherIdx], psValue, sizeof(szWeather[0]));
+          break;
+        case 2: // description
+          strncpy(szWeatherDesc[nWeatherIdx], psValue, sizeof(szWeatherDesc[0]));
+          break;
+        case 3: // icon
+          convertIcon(iValue, (psValue[2] == 'n')?true:false);
+          if(nWeatherIdx < 3) nWeatherIdx++;
+          break;
+      }
+      break;
+    case 1:// main
+      switch(iName)
+      {
+        case 0: // temp
+          fTemp = atof(psValue);
+          break;
+        case 1: // pressure
+          bp = iValue;
+          break;
+        case 2: // humidity
+          rh = iValue;
+          break;
+        case 3: // temp_min
+          fTempMin = atof(psValue);
+          break;
+        case 4: // temp_max
+          fTempMax = atof(psValue);
+          break;
+      }
+      break;
+    case 2:// wind
+      switch(iName)
+      {
+        case 0: // speed
+          fWindSpeed = atof(psValue);
+          fWindGust = 0; // reset in case it's missing
+          break;
+        case 1: // deg
+          windDeg = iValue;
+          break;
+        case 2: // gust
+          fWindGust = atof(psValue);
+          break;
+      }
+      break;
+    case 3:// rain
+      switch(iName)
+      {
+        case 0: // 1h
+          break;
+        case 1: // 3h
+          break;
+      }
+      break;
+    case 4:// snow
+      switch(iName)
+      {
+        case 0: // 1h
+          break;
+        case 1: // 3h
+          break;
+      }
+      break;
+    case 5:// clouds
+      switch(iName)
+      {
+        case 0: // all
+          nCloud = iValue;
+          break;
+      }
+      break;
+  }
+}
+
+//////////////
+
+struct cond2icon
+{
+  const uint8_t num;
+  const char *pIconDay;
+  const char *pIconNight;
 };
-const alert2icon data[] = {
-  {"HUR", tornado}, //Hurricane Local Statement
-  {"TOR", tornado}, //Tornado Warning
-  {"TOW", tornado}, //Tornado Watch
-  {"WRN", icon53},  //Severe Thunderstorm Warning
-  {"SEW", icon53},  //Severe Thunderstorm Watch
-  {"WIN", icon41},  //Winter Weather Advisory
-  {"FLO", icon65},  //Flood Warning
-  {"WAT", iconEye},  //Flood Watch / Statement
-  {"WND", icon16},  //High Wind Advisory
-  {"SVR", pubAnn},  //Severe Weather Statement
-  {"HEA", icon54},  //Heat Advisory
-  {"FOG", icon26},  //Dense Fog Advisory
-  {"SPE", pubAnn},  //Special Weather Statement
-  {"FIR", icon11},  //xFire Weather Advisory
-  {"VOL", icon11},  //xVolcanic Activity Statement
-  {"HWW", tornado}, //Hurricane Wind Warning
-  {"REC", icon11},  //xRecord Set
-  {"REP", pubAnn},  //Public Reports
-  {"PUB", pubAnn},  //Public Information Statement
-  {"", 0}
+const cond2icon cdata[] = { // row column from image at http://www.alessioatzeni.com/meteocons/
+  { 1, icon11, icon12},// clear sky     codes at https://openweathermap.org/weather-conditions
+  { 2, icon21, icon22}, // few clouds
+  { 3, icon32, icon71}, // scattered clouds
+  { 4, icon51, icon75}, // broken clouds
+  { 9, icon36, icon65}, // shower rain
+  {10, icon35, icon64},// rain
+  {11, icon33, icon76}, // thunderstorm
+  {13, icon43, icon71}, // snow
+  {50, icon24, icon31}, // mist
+  {NULL, NULL}
 };
 
-void alertIcon(char *p)
+void convertIcon(uint8_t ni, bool bNight)
 {
-  for(int i = 0; data[i].name[0]; i++)
+  for(int i = 0; cdata[i].num; i++)
   {
-    if(!strcmp(p, data[i].name))
+    if(ni == cdata[i].num)
     {
-      pAlertIcon = data[i].pIcon;
+      pIcon[nWeatherIdx] = (bNight) ? cdata[i].pIconNight:cdata[i].pIconDay;
       break;
     }
   }
