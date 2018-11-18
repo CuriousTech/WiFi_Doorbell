@@ -9,12 +9,13 @@ struct eeSet // EEPROM backed data
   uint16_t sum;           // if sum is diiferent from memory struct, write
   char    szSSID[32];
   char    szSSIDPassword[64];
-  char    location[32];   // location for wunderground
+  int8_t  tz;
+  char    location[32];   // location for weathermap
   bool    bEnablePB[2];   // enable pushbullet for doorbell, motion
   bool    bEnableOLED;
   bool    bMotion;        // motion activated clear
   char    pbToken[40];    // 34
-  char    wuKey[20];      // 16
+  char    owKey[36];      // 32
   char    szNotifIP[16];
   char    szNotifPath[44];
   uint16_t NotifPort;
