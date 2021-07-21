@@ -21,46 +21,60 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-// Build with Arduino IDE 1.8.5, esp8266 SDK 2.4.1
+// Build with Arduino IDE 1.8.9, esp8266 SDK 2.5.0
 
-//uncomment to enable Arduino IDE Over The Air update code
-#define OTA_ENABLE
-
+#include "config.h"
+#include <TimeLib.h> // http://www.pjrc.com/teensy/td_libs_Time.html
+#ifdef OLED_ENABLE
 #include <Wire.h>
 #include "icons.h"
-#include <TimeLib.h> // http://www.pjrc.com/teensy/td_libs_Time.html
 #include <ssd1306_i2c.h>  // https://github.com/CuriousTech/WiFi_Doorbell/tree/master/Libraries/ssd1306_i2c
+#endif
 
 #include <EEPROM.h>
 #include <ESP8266mDNS.h>
 #include "WiFiManager.h"
 #include <ESPAsyncWebServer.h> // https://github.com/me-no-dev/ESPAsyncWebServer
 #include <UdpTime.h> // https://github.com/CuriousTech/ESP07_WiFiGarageDoor/tree/master/libraries/UdpTime
-
 #ifdef OTA_ENABLE
 #include <FS.h>
 #include <ArduinoOTA.h>
 #endif
 
-#include <JsonClient.h> // https://github.com/CuriousTech/WiFi_Doorbell/tree/master/Libraries/jsonClient
+#include <JsonClient.h> // https://github.com/CuriousTech/WiFi_Doorbell/tree/master/Libraries/JsonClient
 #include "PushBullet.h"
 #include "eeMem.h"
 #include "pages.h"
+#include "jsonstring.h"
+#include "Music.h"
+
+#ifdef LEDRING_ENABLE
+#include "LedRing.h"
+#endif
 
 const char controlPassword[] = "password"; // device password for modifying any settings
 int serverPort = 80; // port to access this device
 
-#define ESP_LED    2  // low turns on ESP blue LED
-#define DOORBELL   4 // Note: GPIO4 and GPIO5 are reversed on every pinout on the net
-#define PIR        14
-#define SCL        13
-#define SDA        12
+#define ESP_LED   2  // low turns on ESP blue LED
+#define DOORBELL  4 // Note: GPIO4 and GPIO5 are reversed on every pinout on the net
+#define NEORING   5
+#define PIR       14
+#define SCL       13
+#define SDA       12
 
-IPAddress lastIP;
+uint32_t lastIP;
 int nWrongPass;
 UdpTime utime;
 
+Music mus;
+
+#ifdef LEDRING_H
+LedRing ring;
+#endif
+
+#ifdef OLED_ENABLE
 const char *pIcon[4] ={icon11,NULL};
+#endif
 uint16_t nWeatherID[4];
 char szWeather[4][32] = {"NA"}; // short description
 char szWeatherLoc[32];
@@ -74,18 +88,21 @@ uint8_t nCloud;
 float fWindSpeed;
 uint16_t windDeg;
 float fWindGust;
-bool bStartOLED;
 
 #define DB_CNT 16
 int doorbellTimeIdx = 0;
-unsigned long doorbellTimes[DB_CNT];
+uint32_t doorbellTimes[DB_CNT];
 bool bAutoClear;
 unsigned long dbTime;
-unsigned long pirTime;
+uint32_t pirTime;
 
+#ifdef OLED_ENABLE
 SSD1306 display(0x3c, SDA, SCL); // Initialize the oled display for address 0x3c, sda=12, sdc=13
+bool bStartOLED;
 int displayOnTimer;             // temporary OLED turn-on
-String sMessage;
+//void Scroller(String s);
+void convertIcon(uint8_t ni, bool bNight);
+#endif
 
 WiFiManager wifi;  // AP page:  192.168.4.1
 AsyncWebServer server( serverPort );
@@ -96,8 +113,6 @@ PushBullet pb;
 eeMem eemem;
 
 void sendState(void);
-void Scroller(String s);
-void convertIcon(uint8_t ni, bool bNight);
 // WebSocket
 void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
 JsonClient jsonParse(jsonCallback);
@@ -112,33 +127,29 @@ void owCall(void);
 
 String dataJson() // timed/instant pushed data
 {
-  String s = "{";
-  s += "\"t\":";  s += ( now() - ((ee.tz + utime.getDST()) * 3600) );
-  s += ",\"tz\":"; s += ee.tz;
-  s += ",\"weather\":\"";
-  for(int i = 0; szWeather[i][0] && i < 4; i++)
-  {
-    if(i) s += ",";
-    s += szWeather[i];
-  }
-  s += "\",\"pir\":";  s += pirTime;
-  s += ",\"bellCount\":"; s += doorbellTimeIdx;
-  s += ",\"o\":"; s += ee.bEnableOLED;
-  s += ",\"pbdb\":"; s += ee.bEnablePB[0];
-  s += ",\"pbm\":"; s += ee.bEnablePB[1];
-  s += ",\"loc\":";  s += ee.location;
-  s += ",\"alert\":\""; s += szWeatherDesc[0]; s += "\"";
-  s += ",\"temp\":\""; s += String(fTemp,1); s += "\"";
-  s += ",\"rh\":\""; s += rh; s += "\"";
-  s += ",\"wind\":\""; s += String(fWindSpeed,1) + " "; s += windDeg; s += "deg\"";
-  s += ",\"db\":[";
-  for(int i = 0; i < DB_CNT; i++)
-  {
-    if(i) s += ",";
-    s += doorbellTimes[i];
-  }
-  s += "]}";
-  return s;
+  jsonString js;
+  js.Var("t", (uint32_t)( now() - ((ee.tz + utime.getDST()) * 3600) ) );
+  js.Var("tz", ee.tz);
+  js.Var("weather", szWeather[0] );
+  js.Var("pir",  pirTime );
+  js.Var("bellCount", doorbellTimeIdx);
+  js.Var("o", ee.bEnableOLED );
+  js.Var("pbdb", ee.bEnablePB[0] );
+  js.Var("pbm", ee.bEnablePB[1] );
+  js.Var("loc",  ee.location );
+  js.Var("alert", szWeatherDesc[0] );
+  js.Var("temp", String(fTemp, 1) );
+  js.Var("rh", rh);
+  js.Var("wind", String(fWindSpeed, 1) + " " + windDeg + "deg" );
+  js.Var("m", ee.melody);
+  js.Array("db", doorbellTimes, DB_CNT);
+  return js.Close();
+
+// for(int i = 0; szWeather[i][0] && i < 4; i++)
+//  {
+//    if(i) s += ",";
+//    s += szWeather[i];
+//  }
 }
 
 void parseParams(AsyncWebServerRequest *request)
@@ -169,7 +180,7 @@ void parseParams(AsyncWebServerRequest *request)
 
   uint32_t ip = request->client()->remoteIP();
 
-  if(strcmp(controlPassword, password))
+  if(strcmp(controlPassword, password) || nWrongPass)
   {
     if(nWrongPass == 0) // it takes at least 10 seconds to recognize a wrong password
       nWrongPass = 10;
@@ -177,13 +188,10 @@ void parseParams(AsyncWebServerRequest *request)
       nWrongPass <<= 1;
     if(ip != lastIP)  // if different IP drop it down
        nWrongPass = 10;
-    String data = "hack;{\"ip\":\"";
-    data += request->client()->remoteIP().toString();
-    data += "\",\"pass\":\"";
-    data += password; // a String object here adds a NULL.  Possible bug in SDK
-    data += "\"}";
-    ws.textAll(data);
-    data = String();
+    jsonString js("hack");
+    js.Var("ip", request->client()->remoteIP().toString() );
+    js.Var("pass", password);
+    ws.textAll(js.Close());
     lastIP = ip;
     return;
   }
@@ -200,8 +208,10 @@ void parseParams(AsyncWebServerRequest *request)
     switch( p->name().charAt(0) )
     {
       case 'O': // OLED
+#ifdef OLED_EBALE
           ee.bEnableOLED = bValue;
           if(bValue) bStartOLED = true;
+#endif
           break;
       case 'P': // PushBullet
           {
@@ -213,18 +223,13 @@ void parseParams(AsyncWebServerRequest *request)
           ee.bMotion = bValue;
           break;
       case 'R': // reset
-          if(doorbellTimeIdx)
-            doorbellTimeIdx = 0;
+          doorbellTimeIdx = 0;
+#ifdef LEDRING_H
+          ring.setIndicatorCount(doorbellTimeIdx);
+#endif
           break;
       case 'L': // location
           s.toCharArray(ee.location, sizeof(ee.location));
-          break;
-      case 'm':  // message
-          sMessage = p->value();
-          if(ee.bEnableOLED == false && sMessage.length())
-          {
-            displayOnTimer = 60;
-          }
           break;
       case 'w': // openweathermap key
           s.toCharArray(ee.owKey, sizeof(ee.owKey));
@@ -273,7 +278,7 @@ String timeFmt()
   return r;
 }
 
-String timeToTxt(unsigned long &t)  // GMT to string "Sun 12:00:00 AM"
+String timeToTxt(uint32_t &t)  // GMT to string "Sun 12:00:00 AM"
 {
   tmElements_t tm;
   breakTime(t + (3600 * (ee.tz + utime.getDST())), tm);
@@ -297,113 +302,63 @@ String timeToTxt(unsigned long &t)  // GMT to string "Sun 12:00:00 AM"
 
 void reportReq(AsyncWebServerRequest *request) // report full request to PC
 {
-  String s = "request;{\"remote\":\"";
-  s += request->client()->remoteIP().toString();
-  s += "\",\"method\":\"";
+  jsonString js("remote");
+  js.Var("remote", request->client()->remoteIP().toString() );
+  String sm;
   switch(request->method())
   {
-    case HTTP_GET: s += "GET"; break;
-    case HTTP_POST: s += "POST"; break;
-    case HTTP_DELETE: s += "DELETE"; break;
-    case HTTP_PUT: s += "PUT"; break;
-    case HTTP_PATCH: s += "PATCH"; break;
-    case HTTP_HEAD: s += "HEAD"; break;
-    case HTTP_OPTIONS: s += "OPTIONS"; break;
-    default: s += "<unknown>"; break;
+    case HTTP_GET: sm = "GET"; break;
+    case HTTP_POST: sm = "POST"; break;
+    case HTTP_DELETE: sm = "DELETE"; break;
+    case HTTP_PUT: sm = "PUT"; break;
+    case HTTP_PATCH: sm = "PATCH"; break;
+    case HTTP_HEAD: sm = "HEAD"; break;
+    case HTTP_OPTIONS: sm = "OPTIONS"; break;
+    default: sm = "<unknown>"; break;
   }
-  s += "\",\"host\":\"";
-  s += request->host();
-  s += "\",\"url\":\"";
-  s += request->url();
-  s += "\"";
+  js.Var("method", sm);
+  js.Var("host", request->host() );
+  js.Var("url", request->url() );
+
   if(request->contentLength()){
-    s +=",\"contentType\":\"";
-    s += request->contentType().c_str();
-    s += "\",\"contentLen\":";
-    s += request->contentLength();
+    js.Var("contentType", request->contentType().c_str() );
+    js.Var("contentLen", request->contentLength() );
   }
 
-  int headers = request->headers();
-  int i;
-  if(headers)
-  {
-    s += ",\"header\":[";
-    for(i = 0; i < headers; i++){
-      AsyncWebHeader* h = request->getHeader(i);
-      if(i) s += ",";
-      s +="\"";
-      s += h->name().c_str();
-      s += "=";
-      s += h->value().c_str();
-      s += "\"";
-    }
-    s += "]";
-  }
-  int params = request->params();
-  if(params)
-  {
-    s += ",\"params\":[";
-    for(i = 0; i < params; i++)
-    {
-      AsyncWebParameter* p = request->getParam(i);
-      if(i) s += ",";
-      s += "\"";
-      if(p->isFile()){
-        s += "FILE";
-      } else if(p->isPost()){
-        s += "POST";
-      } else {
-        s += "GET";
-      }
-      s += ",";
-      s += p->name().c_str();
-      s += "=";
-      s += p->value().c_str();
-      s += "\"";
-    }
-    s += "]";
-  }
-  s +="}";
-//  events.send(s.c_str(), "request");
-  ws.textAll(s);
-  s = String();
+  js.ArrayHdrs("header", request);
+  js.ArrayPrms("params", request);
+
+  ws.textAll(js.Close());
 }
 
 void handleS(AsyncWebServerRequest *request)
 {
   parseParams(request);
 
-  String page = "{\"ip\": \"";
-  page += WiFi.localIP().toString();
-  page += ":";
-  page += serverPort;
-  page += "\"}";
-  request->send( 200, "text/json", page );
+  jsonString js;
+  String s = WiFi.localIP().toString() + ":";
+  s += serverPort;
+  js.Var("ip", s);
+  request->send( 200, "text/json", js.Close() );
   reportReq(request);
-  page = String();
 }
 
 // JSON format for initial or full data read
 void handleJson(AsyncWebServerRequest *request)
 {
-  String s = "{";
-  s += "\"weather\": \""; s += szWeather[0];
-  s += "\",\"location\": \""; s += ee.location;
-  s += "\",\"bellCount\": "; s += doorbellTimeIdx;
-  s += ",\"display\": "; s += ee.bEnableOLED;
-  s += ",\"temp\": \""; s += String(fTemp,1);
-  s += "\",\"rh\": "; s += rh;
-  s += ",\"time\": "; s += ( now() - ((ee.tz + utime.getDST()) * 3600) );
-  s += ",\"pir\": "; s += pirTime;
-  s += ",\"t\":[";
-  for(int i = 0; i < DB_CNT; i++)
-  {
-    s += doorbellTimes[i];
-    s += ",";
-  }
-  s += "]}";
-  request->send( 200, "text/json", s );
-  s = String();
+  jsonString js;
+
+  js.Var("weather", szWeather[0] );
+  js.Var("location", ee.location);
+  js.Var("bellCount", doorbellTimeIdx);
+  js.Var("display", ee.bEnableOLED );
+  js.Var("temp", String(fTemp, 1) );
+  js.Var("rh", rh);
+  js.Var("time", (uint32_t)( now() - ((ee.tz + utime.getDST()) * 3600) ) );
+  js.Var("pir", pirTime);
+  js.Var("opto", digitalRead(DOORBELL) );
+  js.Array("t", doorbellTimes, DB_CNT);
+  request->send( 200, "text/json", js.Close() );
 }
 
 const char *jsonListCmd[] = { "cmd", // WebSocket command list
@@ -413,9 +368,12 @@ const char *jsonListCmd[] = { "cmd", // WebSocket command list
   "pbm", // pushbullet motion
   "mot", // motion
   "oled",
-  "msg", // message
   "loc", // location
   "TZ",
+  "ef", // LED effect
+  "play",
+  "cnt", // LED count
+  "m", // melody for doorbell
   NULL
 };
 
@@ -440,6 +398,9 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
             doorbellTimeIdx = 0;
             memset(doorbellTimes, 0, sizeof(doorbellTimes));
             sendState();
+#ifdef LEDRING_H
+            ring.setIndicatorCount(doorbellTimeIdx);
+#endif
           }
           break;
         case 2: // pbdb
@@ -452,22 +413,31 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
           ee.bMotion =iValue;
           break;
         case 5: // OLED
+#ifdef OLED_EBALE
           ee.bEnableOLED = iValue ? true:false;
           if(iValue) bStartOLED = true;
+#endif
           break;
-        case 6: // msg
-          sMessage = psValue;
-          if(ee.bEnableOLED == false && sMessage.length())
-          {
-            displayOnTimer = 60;
-          }
-          break;
-        case 7: // loc
+        case 6: // loc
           strncpy(ee.location, psValue, sizeof(ee.location));
           break;
-        case 8: // TZ
+        case 7: // TZ
           ee.tz = iValue;
           utime.start();
+          break;
+        case 8: // effect
+#ifdef LEDRING_H
+          ring.setEffect(iValue);
+#endif
+          break;
+        case 9: // music
+          mus.play(iValue);
+          break;
+        case 10: // indicator count
+          ring.setIndicatorCount(iValue);
+          break;
+        case 11: // melody
+          ee.melody = iValue;
           break;
       }
       break;
@@ -528,19 +498,21 @@ void sendState()
 // called when doorbell rings (or test)
 void doorBell()
 {
-  if(dbTime == 0) // date isn't set yet
-    return;
+//  Serial.println("Doorbell");
 
   unsigned long newtime = now() - (3600 * (ee.tz + utime.getDST()));
 
   if( newtime - dbTime < 10) // ignore bounces and double taps
+  {
+    dbTime = newtime; // latest trigger
     return;
+  }
 
+//  Serial.println("Doorbell 2");
   doorbellTimes[doorbellTimeIdx] = newtime;
 
-  String s = "Doorbell " + timeToTxt( doorbellTimes[doorbellTimeIdx]);
+  String s = "Doorbell " + timeToTxt( doorbellTimes[doorbellTimeIdx] );
   ws.textAll(String("alert;") + s);
-  s = String();
   sendState();
   if(ee.szNotifIP[0])
     jsNotif.begin(ee.szNotifIP, ee.szNotifPath, ee.NotifPort, false);
@@ -558,6 +530,10 @@ void doorBell()
   if(doorbellTimeIdx < DB_CNT)
     doorbellTimeIdx++;
 
+#ifdef LEDRING_H
+  ring.setIndicatorCount(doorbellTimeIdx);
+#endif
+  mus.play(ee.melody); // play ding-dong
   dbTime = newtime; // latest trigger
 }
 
@@ -568,7 +544,7 @@ void motion()
     return;
 
 //  Serial.println("Motion");
-  unsigned long newtime = now() - (3600 * (ee.tz + utime.getDST()));
+  uint32_t newtime = now() - (3600 * (ee.tz + utime.getDST()));
 
   if( newtime - pirTime < 30) // limit triggers
     return;
@@ -588,14 +564,14 @@ void motion()
 
 volatile bool bDoorBellTriggered = false;
 
-void doorbellISR()
+void ICACHE_RAM_ATTR doorbellISR()
 {
   bDoorBellTriggered = true;
 }
 
 volatile bool bPirTriggered = false;
 
-void pirISR()
+void ICACHE_RAM_ATTR pirISR()
 {
   bPirTriggered = true;
 }
@@ -606,20 +582,28 @@ void setup()
   Serial.begin(115200);
   Serial.println();
 
-  pinMode(ESP_LED, OUTPUT);
+//  pinMode(ESP_LED, OUTPUT);
   pinMode(DOORBELL, INPUT_PULLUP);
   attachInterrupt(DOORBELL, doorbellISR, FALLING);
-  pinMode(PIR, INPUT);
+  pinMode(PIR, INPUT_PULLUP);
   attachInterrupt(PIR, pirISR, FALLING);
+  pinMode(TONE, OUTPUT);
+  digitalWrite(TONE, LOW);
 
+#ifdef OLED_ENABLE
   // initialize dispaly
   display.init();
   display.clear();
   display.display();
+#endif
+
+#ifdef LEDRING_H
+  ring.init(NEORING);
+  ring.setIndicatorType(1);
+#endif
 
   WiFi.hostname(doorbell);
   wifi.autoConnect(doorbell, controlPassword);
-
   if(!wifi.isCfg())
   {
     if ( !MDNS.begin ( doorbell ) )
@@ -633,6 +617,9 @@ void setup()
   server.on ( "/", HTTP_GET | HTTP_POST, [](AsyncWebServerRequest *request){ // main page (avoids call from root)
     if(wifi.isCfg())
       request->send( 200, "text/html", wifi.page() );
+//    else
+//      request->send( 301, "text/html", "Location: http://www.curioustech.net/" );
+    
     reportReq(request);
   });
 
@@ -647,6 +634,7 @@ void setup()
 
   server.onNotFound([](AsyncWebServerRequest *request){ // root and exploits will be called here with *no response* sent back
     //Handle Unknown Request
+//    request->send( 301, "text/html", "Location: http://www.curioustech.net/" );
     reportReq(request);  // Remove if you don't want all kinds of traffic from hacker attempts
 //    request->send(404);
   });
@@ -659,14 +647,15 @@ void setup()
     } else if(n){
       for (int i = 0; i < n; ++i){
         if(i) json += ",";
-        json += "{";
-        json += "\"rssi\":"+String(WiFi.RSSI(i));
-        json += ",\"ssid\":\""+WiFi.SSID(i)+"\"";
-        json += ",\"bssid\":\""+WiFi.BSSIDstr(i)+"\"";
-        json += ",\"channel\":"+String(WiFi.channel(i));
-        json += ",\"secure\":"+String(WiFi.encryptionType(i));
-        json += ",\"hidden\":"+String(WiFi.isHidden(i)?"true":"false");
-        json += "}";
+        jsonString js;
+        
+        js.Var("rssi", String(WiFi.RSSI(i)) );
+        js.Var("ssid", WiFi.SSID(i) );
+        js.Var("bssid", WiFi.BSSIDstr(i) );
+        js.Var("channel", String(WiFi.channel(i)) );
+        js.Var("secure", String(WiFi.encryptionType(i)) );
+        js.Var("hidden", String(WiFi.isHidden(i)?"true":"false") );
+        json += js.Close();
       }
       WiFi.scanDelete();
       if(WiFi.scanComplete() == -2){
@@ -693,47 +682,50 @@ void setup()
   server.begin();
   jsonParse.addList(jsonListCmd);
 
-  MDNS.addService("http", "tcp", serverPort);
+  MDNS.addService("esp", "tcp", serverPort);
 
 #ifdef OTA_ENABLE
   ArduinoOTA.begin();
 #endif
   if(wifi.isCfg() == false)
     utime.start();
+#ifdef LEDRING_H
+  ring.setEffect(ef_spiral);
+#endif
 }
-
-int8_t msgCnt;
 
 void loop()
 {
   static uint8_t sec_save, min_save, hour_save;
-  static bool bPulseLED = false;
 
   MDNS.update();
 #ifdef OTA_ENABLE
   ArduinoOTA.handle();
 #endif
   if(!wifi.isCfg())
-    utime.check(ee.tz);
-
+  {
+    if(utime.check(ee.tz));
+//      ring.setEffect(ef_clock);
+  }
+  
   if(bPirTriggered)
   {
     bPirTriggered = false;
+#ifdef OLED_ENABLE
     if(ee.bEnableOLED == false) // motion activated display on
     {
       displayOnTimer = 30;
       if(doorbellTimeIdx) // keep flashing bell for this time, and auto reset it in 30 secs
         bAutoClear = true;
     }
+ #endif
     motion();
-    bPulseLED = true; // blinks the blue LED
   }
 
   if(bDoorBellTriggered)
   {
     bDoorBellTriggered = false;
     doorBell();
-    bPulseLED = true;
   }
 
   if(sec_save != second()) // only do stuff once per second (loop is maybe 20-30 Hz)
@@ -757,12 +749,15 @@ void loop()
       }
       if (min_save == 0) // hourly stuff
       {
-        unsigned long t = now() - (3600 * ee.tz);
+        uint32_t t = now() - (3600 * ee.tz);
         if(doorbellTimeIdx && doorbellTimes[0] < t - (3600 * 24 *7) ) // 1 week old
         {
           doorbellTimeIdx--;
           if(doorbellTimeIdx)
-            memcpy(doorbellTimes, &doorbellTimes[doorbellTimeIdx], sizeof(unsigned long) * (DB_CNT-doorbellTimeIdx) );
+            memcpy(doorbellTimes, &doorbellTimes[doorbellTimeIdx], sizeof(uint32_t) * (DB_CNT-doorbellTimeIdx) );
+#ifdef LEDRING_H
+          ring.setIndicatorCount(doorbellTimeIdx);
+#endif
         }
       }
       static uint8_t owCnt = 1;
@@ -773,6 +768,7 @@ void loop()
       }
     }
 
+#ifdef OLED_ENABLE
     if(displayOnTimer) // if alerts or messages, turn the display on
       if(--displayOnTimer == 0)
       {
@@ -780,25 +776,39 @@ void loop()
         {
           if(ee.bMotion) doorbellTimeIdx = 0;
           bAutoClear = false;
+#ifdef LEDRING_H
+          ring.setIndicatorCount(doorbellTimeIdx);
+#endif
         }
       }
+#endif
 
     if(nWrongPass)
       nWrongPass--;
 
-    if(bPulseLED)
-    {
-      bPulseLED = false;
-      digitalWrite(ESP_LED, LOW); // turn blue LED on for a second
-    }
-    else
-    {
-      digitalWrite(ESP_LED, HIGH);
-    }
+    draw();
   }
 
   if(wifi.isCfg())
     return;
+
+  mus.service();
+
+#ifdef LEDRING_H
+  ring.service();
+#endif
+#ifdef OLED_ENABLE
+#ifdef LEDRING_H
+  display.updateChunk();
+#else
+  display.display();
+#endif
+#endif
+}
+
+void draw()
+{
+#ifdef OLED_ENABLE
 
 // screen draw from here on (fixed a stack trace dump)
   static int16_t ind;
@@ -835,42 +845,33 @@ void loop()
     static uint8_t nSec;
     if(nSec != second())
     {
-      nSec != second();
+      nSec = second();
       nIcon = (nIcon + 1) & 3; // alternate multiple icons
       if(pIcon[nIcon] == NULL)
         nIcon = 0;
     }
 
     display.drawXbm(iconX+10, 20, 44, 42, pIcon[nIcon]);
-  
-    if(sMessage.length()) // message sent over wifi or alert
-    {
-      s = sMessage;
-      s += timeFmt(); // display current time too
-      s += "  ";
 
-      if(msgCnt == 0) // starting
-        msgCnt = 3; // times to repeat message
-    }
-    else
+    static uint8_t d;
+    switch(d>>3)
     {
-      s = timeFmt();
-      s += "  ";
-      s += dayShortStr(weekday());
-      s += " ";
-      s += String(day());
-      s += " ";
-      s += monthShortStr(month());
-      s += "  ";
-      for(int i = 0; szWeather[i] && i < 4; i++)
-      {
-        s += szWeather[i];
-        s += "  ";
-      }
+      default:
+        d = 0;
+      case 0:
+        s = timeFmt();
+        break;
+      case 1:
+        s = dayShortStr(weekday());
+        s += " ";
+        s += String(day());
+        s += " ";
+        s += monthShortStr(month());
+        break;
     }
-    Scroller(s);
-    s = String();
+    d++;
 
+    display.drawPropString(0, 0, s ); // time
     display.drawPropString(infoX, 23, String(fTemp, 1) + "]" );
     display.drawString(infoX + 20, 43, String(rh) + "%");
     if(blnk && doorbellTimeIdx) // blink small gauge if doorbell logged
@@ -884,45 +885,7 @@ void loop()
     if(blnk) display.drawXbm(iconX+10, 20, 44, 42, bell);
     display.drawPropString(infoX + 5, 23, String(doorbellTimeIdx) ); // count
   }
-
-  display.display();
-}
-
-// Text scroller optimized for very long lines
-void Scroller(String s)
-{
-  static int16_t ind = 0;
-  static char last = 0;
-  static int16_t x = 0;
-
-  if(last != s.charAt(0)) // reset if content changed
-  {
-    x = 0;
-    ind = 0;
-  }
-  last = s.charAt(0);
-  int len = s.length(); // get length before overlap added
-  s += s.substring(0, 18); // add ~screen width overlap
-  int w = display.propCharWidth(s.charAt(ind)); // first char for measure
-  if(w > 40) w = 10; // bug
-  String sPart = s.substring(ind, ind + 18);
-  display.drawPropString(x, 0, sPart );
-
-  if( --x <= -(w))
-  {
-    x = 0;
-    if(++ind >= len) // reset at last char
-    {
-      ind = 0;
-      if(msgCnt) // end of custom message display
-      {
-        if(--msgCnt == 0) // decrement times to repeat it
-        {
-          sMessage = String();
-        }
-      }
-    }
-  }
+#endif
 }
 
 ///////////////
@@ -953,7 +916,9 @@ void owCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
   {
     case 0: // weather [{},{},{}] array
       nWeatherIdx = 0;
+#ifdef OLED_EBALE
       memset(pIcon, 0, sizeof(pIcon));
+#endif
       memset(nWeatherID, 0, sizeof(nWeatherID));
       memset(szWeather, 0, sizeof(szWeather));
       memset(szWeatherDesc, 0, sizeof(szWeatherDesc));
@@ -1074,7 +1039,9 @@ void innerCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
           strncpy(szWeatherDesc[nWeatherIdx], psValue, sizeof(szWeatherDesc[0]));
           break;
         case 3: // icon
+#ifdef OLED_ENABLE
           convertIcon(iValue, (psValue[2] == 'n')?true:false);
+#endif
           if(nWeatherIdx < 3) nWeatherIdx++;
           break;
       }
@@ -1143,7 +1110,7 @@ void innerCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
   }
 }
 
-//////////////
+#ifdef OLED_ENABLE
 
 struct cond2icon
 {
@@ -1175,3 +1142,4 @@ void convertIcon(uint8_t ni, bool bNight)
     }
   }
 }
+#endif
