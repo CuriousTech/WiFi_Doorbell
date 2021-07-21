@@ -19,6 +19,10 @@ struct eeSet // EEPROM backed data
   char    szNotifIP[16];
   char    szNotifPath[44];
   uint16_t NotifPort;
+  uint8_t  hostIP[4];
+  uint16_t hostPort;
+  uint8_t  melody;
+  uint8_t  res[8];
 };
 
 class eeMem
