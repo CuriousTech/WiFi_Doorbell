@@ -38,7 +38,7 @@ SSD1306::SSD1306(int i2cAddress, int sda, int sdc)
 
 void SSD1306::init() {
   Wire.begin(mySda, mySdc);
-  Wire.setClock(400000); 
+  Wire.setClock(400000);
   sendInitCommands();
   resetDisplay();
 }
@@ -75,13 +75,31 @@ void SSD1306::flipScreenVertically() {
   sendCommand(0xC8);            //COMSCANDEC  Rotate screen 180 Deg
 }
 
+#define B_SIZE (128 * 64 / 8)
+
 void SSD1306::clear(void) {
-    memset(buffer, 0, (128*64 / 8));
+    memset(buffer, 0, B_SIZE);
+}
+
+void SSD1306::updateChunk(void) {
+    static uint16_t o = 0;
+
+    if(o >= B_SIZE)
+        o = 0;
+    for (uint16_t i=0; i < B_SIZE / 8; i++) {
+      Wire.beginTransmission(myI2cAddress);
+      Wire.write(0x40);
+      for (uint8_t x=0; x<16; x++) {
+        Wire.write(buffer[o++]);
+        i++;
+      }
+      Wire.endTransmission();
+    }
 }
 
 void SSD1306::display(void) {
 
-    for (uint16_t i=0; i<(128*64/8); i++) {
+    for (uint16_t i=0; i< B_SIZE; i++) {
       // send a bunch of data in one xmission
       //Wire.begin(mySda, mySdc);
       Wire.beginTransmission(myI2cAddress);
@@ -219,7 +237,7 @@ void SSD1306::drawBitmap(int x, int y, int width, int height, const char *bitmap
         setPixel(targetX, targetY);  
       }
     }
-  }  
+  }
 }
 
 void SSD1306::setColor(int color) {
