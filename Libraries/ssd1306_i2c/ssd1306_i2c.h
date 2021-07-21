@@ -60,6 +60,7 @@ public:
    void displayOff(void);
    void clear(void);
    void display(void);
+   void updateChunk(void);
    void setPixel(int x, int y);
    void setChar(int x, int y, unsigned char data);
    void drawString(int x, int y, String text);
