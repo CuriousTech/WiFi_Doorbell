@@ -12,10 +12,13 @@ eeSet ee = { sizeof(eeSet), 0xAAAA,
   true,   // Enable OLED
   false,
   "pushbullet token", // PushBullet token
-  "openweathermap appid", // openweathermap appid
-  "192.168.0.116", // szNotifIP
-  "/s?key=password&f=1200&b=1000", // szNotifPath
-  82 // NotifPort
+  "openweathermap appid", // openweather key
+  "192.168.0.131", // szNotifIP
+  "/s?key=password&beep=1200,100", // szNotifPath
+  80, // NotifPort
+  {192,168,0,100}, 83, // host IP and port
+  0,  // melody
+  {0},
 };
 
 eeMem::eeMem()
