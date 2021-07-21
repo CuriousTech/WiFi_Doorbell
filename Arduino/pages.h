@@ -1,133 +1,210 @@
-const char page1[] PROGMEM =
-   "<!DOCTYPE html>\n"
-   "<html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>\n"
-   "<title>WiFi Doorbell</title>\n"
-   "<style type=\"text/css\">\n"
-   "div,table,input{\n"
-   "border-radius: 5px;\n"
-   "margin-bottom: 5px;\n"
-   "box-shadow: 2px 2px 12px #000000;\n"
-   "background-image: -moz-linear-gradient(top, #ffffff, #50a0ff);\n"
-   "background-image: -ms-linear-gradient(top, #ffffff, #50a0ff);\n"
-   "background-image: -o-linear-gradient(top, #ffffff, #50a0ff);\n"
-   "background-image: -webkit-linear-gradient(top, #efffff, #50a0ff);background-image: linear-gradient(top, #ffffff, #50a0ff);\n"
-   "background-clip: padding-box;\n"
-   "}\n"
-   "body{width:240px;display:block;margin-left:auto;margin-right:auto;text-align:center;font-family: Arial, Helvetica, sans-serif;}}\n"
-   "</style>\n"
-   "<script type=\"text/javascript\">\n"
-   "a=document.all\n"
-   "oledon=0\n"
-   "pb0=0\n"
-   "pb1=0\n"
-   "bmot=0\n"
-   "function startEvents(){\n"
-   "ws = new WebSocket(\"ws://\"+window.location.host+\"/ws\")\n"
-   "ws.onopen = function(evt) { }\n"
-   "ws.onclose = function(evt) { alert(\"Connection closed.\"); }\n"
-   "ws.onmessage = function(evt) {\n"
-   " lines = evt.data.split(';')\n"
-   " event=lines[0]\n"
-   " data=lines[1]\n"
-   " if(event == 'state')\n"
-   " {\n"
-   "  d=JSON.parse(data)\n"
-   "  dt=new Date(d.t*1000)\n"
-   "  a.time.innerHTML=dt.toLocaleTimeString()\n"
-   "  for(i=0;i<16;i++){\n"
-   "   dt=new Date(d.db[i]*1000)\n"
-   "   document.getElementById('t'+i).innerHTML=dt.toString().split(' ')[0]+' '+dt.toLocaleTimeString()\n"
-   "   document.getElementById('r'+i).setAttribute('style',d.db[i]?'':'display:none')\n"
-   "  }\n"
-   "  oledon=d.o\n"
-   "  pb0=d.pbdb\n"
-   "  pb1=d.pbm\n"
-   "  dt=new Date(d.pir*1000)\n"
-   "  a.mot.innerHTML=dt.toString().split(' ')[0]+' '+dt.toLocaleTimeString()\n"
-   "  a.loc.value=d.loc\n"
-   "  a.OLED.value=oledon?'ON ':'OFF'\n"
-   "  a.MOT.value=bmot?'ON ':'OFF'\n"
-   "  a.PB0.value=pb0?'ON ':'OFF'\n"
-   "  a.PB1.value=pb1?'ON ':'OFF'\n"
-   "  a.temp.innerHTML=d.temp+'&deg '+d.rh+'%'\n"
-   "  a.wea.innerHTML=d.weather\n"
-   "  a.alert.innerHTML=d.alert\n"
-   "  a.wind.innerHTML='Wind '+d.wind\n"
-   " }\n"
-   " else if(event == 'alert')\n"
-   " {\n"
-   "  alert(data)\n"
-   " }\n"
-   "}\n"
-   "}\n"
-   "function setVar(varName, value)\n"
-   "{\n"
-   " ws.send('cmd;{\"key\":\"'+a.myKey.value+'\",\"'+varName+'\":'+value+'}')\n"
-   "}\n"
-   "function reset(){setVar('reset', 0)}\n"
-   "function oled(){\n"
-   " oledon=!oledon\n"
-   " setVar('oled', oledon?1:0)\n"
-   " a.OLED.value=oledon?'ON':'OFF'\n"
-   "}\n"
-   "function pbToggle0(){\n"
-   "pb0=!pb0\n"
-   "setVar('pbdb', pb0?1:0)\n"
-   "a.PB0.value=pb0?'ON ':'OFF'\n"
-   "}\n"
-   "function pbToggle1(){\n"
-   "pb1=!pb1\n"
-   "setVar('pbm', pb1?1:0)\n"
-   "a.PB1.value=pb1?'ON ':'OFF'\n"
-   "}\n"
-   "function motTog(){\n"
-   "bmot=!bmot\n"
-   "setVar('mot', bmot?1:0)\n"
-   "a.MOT.value=bmot?'ON ':'OFF'\n"
-   "}\n"
-   "function setLoc(){setVar('loc', a.loc.value)}\n"
-   "function sendMsg(){setVar('msg', a.msg.value)}\n"
-   "</script>\n"
-   "</head>\n"
-   "<body onload=\"{\n"
-   "key=localStorage.getItem('key')\n"
-   "if(key!=null) document.getElementById('myKey').value=key\n"
-   "startEvents()\n"
-   "}\">\n"
-   "<div><h3>WiFi Doorbell</h3>\n"
-   "<table align=\"center\">\n"
-   "<tr><td><div id=\"time\"></div></td><td><div id=\"temp\"></div></td></tr>\n"
-   "<tr><td colspan=2>Doorbell Rings: <input type=\"button\" value=\"Clear\" id=\"resetBtn\" onClick=\"{reset()}\"></td></tr>\n"
-   "<tr id=r0 style=\"display:none\"><td></td><td><div id=\"t0\"></div></td></tr>\n"
-   "<tr id=r1 style=\"display:none\"><td></td><td><div id=\"t1\"></div></td></tr>\n"
-   "<tr id=r2 style=\"display:none\"><td></td><td><div id=\"t2\"></div></td></tr>\n"
-   "<tr id=r3 style=\"display:none\"><td></td><td><div id=\"t3\"></div></td></tr>\n"
-   "<tr id=r4 style=\"display:none\"><td></td><td><div id=\"t4\"></div></td></tr>\n"
-   "<tr id=r5 style=\"display:none\"><td></td><td><div id=\"t5\"></div></td></tr>\n"
-   "<tr id=r6 style=\"display:none\"><td></td><td><div id=\"t6\"></div></td></tr>\n"
-   "<tr id=r7 style=\"display:none\"><td></td><td><div id=\"t7\"></div></td></tr>\n"
-   "<tr id=r8 style=\"display:none\"><td></td><td><div id=\"t8\"></div></td></tr>\n"
-   "<tr id=r9 style=\"display:none\"><td></td><td><div id=\"t9\"></div></td></tr>\n"
-   "<tr id=r10 style=\"display:none\"><td></td><td><div id=\"t10\"></div></td></tr>\n"
-   "<tr id=r11 style=\"display:none\"><td></td><td><div id=\"t11\"></div></td></tr>\n"
-   "<tr id=r12 style=\"display:none\"><td></td><td><div id=\"t12\"></div></td></tr>\n"
-   "<tr id=r13 style=\"display:none\"><td></td><td><div id=\"t13\"></div></td></tr>\n"
-   "<tr id=r14 style=\"display:none\"><td></td><td><div id=\"t14\"></div></td></tr>\n"
-   "<tr id=r15 style=\"display:none\"><td></td><td><div id=\"t15\"></div></td></tr>\n"
-   "<tr><td>Motion:</td><td><div id=\"mot\"></div></td></tr>\n"
-   "<tr><td>Display:</td><td><input type=\"button\" value=\"OFF\" id=\"OLED\" onClick=\"{oled()}\"> Mot <input type=\"button\" value=\"OFF\" id=\"MOT\" onClick=\"{motTog()}\"></td></tr>\n"
-   "<tr><td>PushBullet:</td><td><input type=\"button\" value=\"OFF\" id=\"PB0\" onClick=\"{pbToggle0()}\"> Mot <input type=\"button\" value=\"OFF\" id=\"PB1\" onClick=\"{pbToggle1()}\"></td></tr>\n"
-   "<tr><td>Message:</td><td><input id='msg' type=text size=8 value=''><input value=\"Set\" type='button' onclick=\"{sendMsg()}\"></td></tr>\n"
-   "<tr><td>Location:</td><td><input id='loc' type=text size=8 value=''><input value=\"Set\" type='button' onclick=\"{setLoc()}\"></td></tr>\n"
-   "</table>\n"
-   "<div id=\"wea\"></div>\n"
-   "<div id=\"alert\"></div>\n"
-   "<div id=\"wind\"></div>\n"
-   "<input id=\"myKey\" name=\"key\" type=text size=50 placeholder=\"password\" style=\"width: 150px\"><input type=\"button\" value=\"Save\" onClick=\"{localStorage.setItem('key', key = document.all.myKey.value)}\">\n"
-   "<br></div>\n"
-   "<small>Copyright &copy 2016 CuriousTech.net</small>\n"
-   "</body>\n"
-   "</html>\n";
+const char page1[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html lang="en"><head><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>WiFi Doorbell</title>
+<style type="text/css">
+div,table,input{
+border-radius: 5px;
+margin-bottom: 5px;
+box-shadow: 2px 2px 12px #000000;
+background-image: -moz-linear-gradient(top, #ffffff, #50a0ff);
+background-image: -ms-linear-gradient(top, #ffffff, #50a0ff);
+background-image: -o-linear-gradient(top, #ffffff, #50a0ff);
+background-image: -webkit-linear-gradient(top, #efffff, #50a0ff);background-image: linear-gradient(top, #ffffff, #50a0ff);
+background-clip: padding-box;
+}
+.dropdown {
+    position: relative;
+    display: inline-block;
+}
+.dropbtn {
+    background-color: #50a0ff;
+    padding: 1px;
+    font-size: 12px;
+  background-image: -webkit-linear-gradient(top, #efa0b0, #50a0ff);
+  border-radius: 5px;
+  margin-bottom: 5px;
+  box-shadow: 2px 2px 12px #000000;
+}
+.btn {
+    background-color: #50a0ff;
+    padding: 1px;
+    font-size: 12px;
+    min-width: 50px;
+    border: none;
+}
+.dropdown-content {
+    display: none;
+    position: absolute;
+    background-color: #919191;
+    min-width: 40px;
+    min-height: 1px;
+    z-index: 1;
+}
+.dropdown:hover .dropdown-content {display: block;}
+.dropdown:hover .dropbtn {background-color: #3e8e41;}
+.dropdown:hover .btn {  background-image: -webkit-linear-gradient(top, #efffff, #a0a0ff);}
+body{width:240px;display:block;margin-left:auto;margin-right:auto;text-align:center;font-family: Arial, Helvetica, sans-serif;}}
+</style>
+<script type="text/javascript">
+a=document.all
+oledon=0
+pb0=0
+pb1=0
+bmot=0
+function startEvents(){
+//ws = new WebSocket("ws://192.168.31.178/ws")
+ws = new WebSocket("ws://"+window.location.host+"/ws")
+ws.onopen = function(evt) { }
+ws.onclose = function(evt) { alert("Connection closed."); }
+ws.onmessage = function(evt) {
+ lines = evt.data.split(';')
+ event=lines[0]
+ data=lines[1]
+ console.log(data)
+ if(event == 'state')
+ {
+  d=JSON.parse(data)
+  dt=new Date(d.t*1000)
+  a.time.innerHTML=dt.toLocaleTimeString()
+  for(i=0;i<16;i++){
+   dt=new Date(d.db[i]*1000)
+   document.getElementById('t'+i).innerHTML=dt.toString().split(' ')[0]+' '+dt.toLocaleTimeString()
+   document.getElementById('r'+i).setAttribute('style',d.db[i]?'':'display:none')
+  }
+  oledon=d.o
+  pb0=d.pbdb
+  pb1=d.pbm
+  dt=new Date(d.pir*1000)
+  a.mot.innerHTML=dt.toString().split(' ')[0]+' '+dt.toLocaleTimeString()
+  a.loc.value=d.loc
+  a.OLED.value=oledon?'ON ':'OFF'
+  a.MOT.value=bmot?'ON ':'OFF'
+  a.PB0.value=pb0?'ON ':'OFF'
+  a.PB1.value=pb1?'ON ':'OFF'
+  a.temp.innerHTML=d.temp+'&deg '+d.rh+'%'
+  a.wea.innerHTML=d.weather
+  a.alert.innerHTML=d.alert
+  a.wind.innerHTML='Wind '+d.wind
+ }
+ else if(event == 'alert')
+ {
+  alert(data)
+ }
+}
+}
+function setVar(varName, value)
+{
+ ws.send('cmd;{"key":"'+a.myKey.value+'","'+varName+'":'+value+'}')
+}
+function reset(){setVar('reset', 0)}
+function oled(){
+ oledon=!oledon
+ setVar('oled', oledon?1:0)
+ a.OLED.value=oledon?'ON':'OFF'
+}
+function pbToggle0(){
+pb0=!pb0
+setVar('pbdb', pb0?1:0)
+a.PB0.value=pb0?'ON ':'OFF'
+}
+function pbToggle1(){
+pb1=!pb1
+setVar('pbm', pb1?1:0)
+a.PB1.value=pb1?'ON ':'OFF'
+}
+function motTog(){
+bmot=!bmot
+setVar('mot', bmot?1:0)
+a.MOT.value=bmot?'ON ':'OFF'
+}
+function setLoc(){setVar('loc', a.loc.value)}
+function sendMus(n){setVar('play', n)}
+function setEff(n){setVar('ef', n)}
+function setCnt(n){setVar('cnt', n)}
+</script>
+</head>
+<body onload="{
+key=localStorage.getItem('key')
+if(key!=null) document.getElementById('myKey').value=key
+startEvents()
+}">
+<div><h3>WiFi Doorbell</h3>
+<table align="center">
+<tr><td><div id="time"></div></td><td><div id="temp"></div></td></tr>
+<tr><td colspan=2>Doorbell Rings: <input type="button" value="Clear" id="resetBtn" onClick="{reset()}"></td></tr>
+<tr id=r0 style="display:none"><td></td><td><div id="t0"></div></td></tr>
+<tr id=r1 style="display:none"><td></td><td><div id="t1"></div></td></tr>
+<tr id=r2 style="display:none"><td></td><td><div id="t2"></div></td></tr>
+<tr id=r3 style="display:none"><td></td><td><div id="t3"></div></td></tr>
+<tr id=r4 style="display:none"><td></td><td><div id="t4"></div></td></tr>
+<tr id=r5 style="display:none"><td></td><td><div id="t5"></div></td></tr>
+<tr id=r6 style="display:none"><td></td><td><div id="t6"></div></td></tr>
+<tr id=r7 style="display:none"><td></td><td><div id="t7"></div></td></tr>
+<tr id=r8 style="display:none"><td></td><td><div id="t8"></div></td></tr>
+<tr id=r9 style="display:none"><td></td><td><div id="t9"></div></td></tr>
+<tr id=r10 style="display:none"><td></td><td><div id="t10"></div></td></tr>
+<tr id=r11 style="display:none"><td></td><td><div id="t11"></div></td></tr>
+<tr id=r12 style="display:none"><td></td><td><div id="t12"></div></td></tr>
+<tr id=r13 style="display:none"><td></td><td><div id="t13"></div></td></tr>
+<tr id=r14 style="display:none"><td></td><td><div id="t14"></div></td></tr>
+<tr id=r15 style="display:none"><td></td><td><div id="t15"></div></td></tr>
+<tr><td>Motion:</td><td><div id="mot"></div></td></tr>
+<tr><td>Display:</td><td><input type="button" value="OFF" id="OLED" onClick="{oled()}"> Mot <input type="button" value="OFF" id="MOT" onClick="{motTog()}"></td></tr>
+<tr><td>PushBullet:</td><td><input type="button" value="OFF" id="PB0" onClick="{pbToggle0()}"> Mot <input type="button" value="OFF" id="PB1" onClick="{pbToggle1()}"></td></tr>
+<tr><td>Test:</td><td>
+<div class="dropdown">
+  <button class="dropbtn">Music</button>
+  <div class="dropdown-content">
+  <button class="btn" id="m0" onclick="sendMus(0)">Doorbell</button>
+  <button class="btn" id="m1" onclick="sendMus(1)">Song1</button>
+  <button class="btn" id="m2" onclick="sendMus(2)">Song2</button>
+  <button class="btn" id="m3" onclick="sendMus(3)">Song3</button>
+  <button class="btn" id="m4" onclick="sendMus(4)">Song4</button>
+  </div>
+</div>
+<div class="dropdown">
+  <button class="dropbtn">Effect</button>
+  <div class="dropdown-content">
+  <button class="btn" id="e0" onclick="setEff(0)">None</button>
+  <button class="btn" id="e1" onclick="setEff(1)">Hold</button>
+  <button class="btn" id="e2" onclick="setEff(2)">Off</button>
+  <button class="btn" id="e3" onclick="setEff(3)">rainbowCycle</button>
+  <button class="btn" id="e4" onclick="setEff(4)">rainbow</button>
+  <button class="btn" id="e5" onclick="setEff(5)">theaterChase</button>
+  <button class="btn" id="e6" onclick="setEff(6)">theaterChaseRainbow</button>
+  <button class="btn" id="e7" onclick="setEff(7)">alert</button>
+  <button class="btn" id="e8" onclick="setEff(8)">glow</button>
+  <button class="btn" id="e9" onclick="setEff(9)">chaser</button>
+  <button class="btn" id="e10" onclick="setEff(10)">pendulum</button>
+  <button class="btn" id="e11" onclick="setEff(11)">orbit</button>
+  <button class="btn" id="e12" onclick="setEff(12)">clock</button>
+  <button class="btn" id="e13" onclick="setEff(13)">spiral</button>
+  <button class="btn" id="e14" onclick="setEff(14)">doubleSpiral</button>
+  <button class="btn" id="e15" onclick="setEff(15)">wings</button>
+  </div>
+</div>
+<div class="dropdown">
+  <button class="dropbtn">IndCnt</button>
+  <div class="dropdown-content">
+  <button class="btn" id="c0" onclick="setCnt(0)">0</button>
+  <button class="btn" id="c1" onclick="setCnt(1)">1</button>
+  <button class="btn" id="c2" onclick="setCnt(2)">2</button>
+  <button class="btn" id="c3" onclick="setCnt(3)">3</button>
+  </div>
+</div>
+</td></tr>
+<tr><td>Location:</td><td><input id='loc' type=text size=8 value=''><input value="Set" type='button' onclick="{setLoc()}"></td></tr>
+</table>
+<div id="wea"></div>
+<div id="alert"></div>
+<div id="wind"></div>
+<input id="myKey" name="key" type=text size=50 placeholder="password" style="width: 150px"><input type="button" value="Save" onClick="{localStorage.setItem('key', key = document.all.myKey.value)}">
+<br></div>
+<small>Copyright &copy 2016 CuriousTech.net</small>
+</body>
+</html>
+)rawliteral";
 
 const uint8_t favicon[] PROGMEM = {
   0x1F, 0x8B, 0x08, 0x08, 0x70, 0xC9, 0xE2, 0x59, 0x04, 0x00, 0x66, 0x61, 0x76, 0x69, 0x63, 0x6F, 
