@@ -21,77 +21,65 @@ const int melody_pacman[] = {
   NOTE_F5, 32,  NOTE_FS5, 32,  NOTE_G5, 32,  NOTE_G5, 32, NOTE_GS5, 32,  NOTE_A5, 16, NOTE_B5, 8
 };
 
-const int melody_Brahms[] = {
-  // Wiegenlied (Brahms' Lullaby)
-  // Score available at https://www.flutetunes.com/tunes.php?id=54
+const int melody_PinkPanther[] = {
 
-  NOTE_G4, 4, NOTE_G4, 4, //1
-  NOTE_AS4, -4, NOTE_G4, 8, NOTE_G4, 4,
-  NOTE_AS4, 4, REST, 4, NOTE_G4, 8, NOTE_AS4, 8,
-  NOTE_DS5, 4, NOTE_D5, -4, NOTE_C5, 8,
-  NOTE_C5, 4, NOTE_AS4, 4, NOTE_F4, 8, NOTE_G4, 8,
-  NOTE_GS4, 4, NOTE_F4, 4, NOTE_F4, 8, NOTE_G4, 8,
-  NOTE_GS4, 4, REST, 4, NOTE_F4, 8, NOTE_GS4, 8,
-  NOTE_D5, 8, NOTE_C5, 8, NOTE_AS4, 4, NOTE_D5, 4,
+  // Pink Panther theme
+  // Score available at https://musescore.com/benedictsong/the-pink-panther
+  // Theme by Masato Nakamura, arranged by Teddy Mason
 
-  NOTE_DS5, 4, REST, 4, NOTE_DS4, 8, NOTE_DS4, 8, //8
-  NOTE_DS5, 2, NOTE_C5, 8, NOTE_GS4, 8,
-  NOTE_AS4, 2, NOTE_G4, 8, NOTE_DS4, 8,
-  NOTE_GS4, 4, NOTE_AS4, 4, NOTE_C5, 4,
-  NOTE_AS4, 2, NOTE_DS4, 8, NOTE_DS4, 8,
-  NOTE_DS5, 2, NOTE_C5, 8, NOTE_GS4, 8,
-  NOTE_AS4, 2, NOTE_G4, 8, NOTE_DS4, 8,
-  NOTE_AS4, 4, NOTE_G4, 4, NOTE_DS4, 4,
-  NOTE_DS4, 2
+  REST,2, REST,4, REST,8, NOTE_DS4,8, 
+  NOTE_E4,-4, REST,8, NOTE_FS4,8, NOTE_G4,-4, REST,8, NOTE_DS4,8,
+  NOTE_E4,-8, NOTE_FS4,8,  NOTE_G4,-8, NOTE_C5,8, NOTE_B4,-8, NOTE_E4,8, NOTE_G4,-8, NOTE_B4,8,   
+  NOTE_AS4,2, NOTE_A4,-16, NOTE_G4,-16, NOTE_E4,-16, NOTE_D4,-16, 
+  NOTE_E4,2, REST,4, REST,8, NOTE_DS4,4,
+
+  NOTE_E4,-4, REST,8, NOTE_FS4,8, NOTE_G4,-4, REST,8, NOTE_DS4,8,
+  NOTE_E4,-8, NOTE_FS4,8,  NOTE_G4,-8, NOTE_C5,8, NOTE_B4,-8, NOTE_G4,8, NOTE_B4,-8, NOTE_E5,8,
+  NOTE_DS5,1,   
+  NOTE_D5,2, REST,4, REST,8, NOTE_DS4,8, 
+  NOTE_E4,-4, REST,8, NOTE_FS4,8, NOTE_G4,-4, REST,8, NOTE_DS4,8,
+  NOTE_E4,-8, NOTE_FS4,8,  NOTE_G4,-8, NOTE_C5,8, NOTE_B4,-8, NOTE_E4,8, NOTE_G4,-8, NOTE_B4,8,   
+  
+  NOTE_AS4,2, NOTE_A4,-16, NOTE_G4,-16, NOTE_E4,-16, NOTE_D4,-16, 
+  NOTE_E4,-4, REST,4,
+  REST,4, NOTE_E5,-8, NOTE_D5,8, NOTE_B4,-8, NOTE_A4,8, NOTE_G4,-8, NOTE_E4,-8,
+  NOTE_AS4,16, NOTE_A4,-8, NOTE_AS4,16, NOTE_A4,-8, NOTE_AS4,16, NOTE_A4,-8, NOTE_AS4,16, NOTE_A4,-8,   
+  NOTE_G4,-16, NOTE_E4,-16, NOTE_D4,-16, NOTE_E4,16, NOTE_E4,16, NOTE_E4,2,
+ 
+};
+const int melody_keyboardCat[] = {
+
+  // Keyboard cat
+  // Score available at https://musescore.com/user/142788/scores/147371
+
+    NOTE_C4,4, NOTE_E4,4, NOTE_G4,4, NOTE_E4,4, 
+    NOTE_C4,4, NOTE_E4,8, NOTE_G4,-4, NOTE_E4,4,
+    NOTE_A3,4, NOTE_C4,4, NOTE_E4,4, NOTE_C4,4,
+    NOTE_A3,4, NOTE_C4,8, NOTE_E4,-4, NOTE_C4,4,
+    NOTE_G3,4, NOTE_B3,4, NOTE_D4,4, NOTE_B3,4,
+    NOTE_G3,4, NOTE_B3,8, NOTE_D4,-4, NOTE_B3,4,
+
+    NOTE_G3,4, NOTE_G3,8, NOTE_G3,-4, NOTE_G3,8, NOTE_G3,4, 
+    NOTE_G3,4, NOTE_G3,4, NOTE_G3,8, NOTE_G3,4,
+    NOTE_C4,4, NOTE_E4,4, NOTE_G4,4, NOTE_E4,4, 
+    NOTE_C4,4, NOTE_E4,8, NOTE_G4,-4, NOTE_E4,4,
+    NOTE_A3,4, NOTE_C4,4, NOTE_E4,4, NOTE_C4,4,
+    NOTE_A3,4, NOTE_C4,8, NOTE_E4,-4, NOTE_C4,4,
+    NOTE_G3,4, NOTE_B3,4, NOTE_D4,4, NOTE_B3,4,
+    NOTE_G3,4, NOTE_B3,8, NOTE_D4,-4, NOTE_B3,4,
+
+    NOTE_G3,-1, 
 };
 
-int melody_cantina[] = {
-  // Cantina BAnd - Star wars 
-  // Score available at https://musescore.com/user/6795541/scores/1606876
-  NOTE_B4,-4, NOTE_E5,-4, NOTE_B4,-4, NOTE_E5,-4, 
-  NOTE_B4,8,  NOTE_E5,-4, NOTE_B4,8, REST,8,  NOTE_AS4,8, NOTE_B4,8, 
-  NOTE_B4,8,  NOTE_AS4,8, NOTE_B4,8, NOTE_A4,8, REST,8, NOTE_GS4,8, NOTE_A4,8, NOTE_G4,8,
-  NOTE_G4,4,  NOTE_E4,-2, 
-  NOTE_B4,-4, NOTE_E5,-4, NOTE_B4,-4, NOTE_E5,-4, 
-  NOTE_B4,8,  NOTE_E5,-4, NOTE_B4,8, REST,8,  NOTE_AS4,8, NOTE_B4,8,
+const int melody_Nokia[] = {
 
-  NOTE_A4,-4, NOTE_A4,-4, NOTE_GS4,8, NOTE_A4,-4,
-  NOTE_D5,8,  NOTE_C5,-4, NOTE_B4,-4, NOTE_A4,-4,
-  NOTE_B4,-4, NOTE_E5,-4, NOTE_B4,-4, NOTE_E5,-4, 
-  NOTE_B4,8,  NOTE_E5,-4, NOTE_B4,8, REST,8,  NOTE_AS4,8, NOTE_B4,8,
-  NOTE_D5,4, NOTE_D5,-4, NOTE_B4,8, NOTE_A4,-4,
-  NOTE_G4,-4, NOTE_E4,-2,
-  NOTE_E4, 2, NOTE_G4,2,
-  NOTE_B4, 2, NOTE_D5,2,
-
-  NOTE_F5, -4, NOTE_E5,-4, NOTE_AS4,8, NOTE_AS4,8, NOTE_B4,4, NOTE_G4,4, 
-};
-
-const int melody_imperial[] = {
+  // Nokia Ringtone 
+  // Score available at https://musescore.com/user/29944637/scores/5266155
   
-  // Dart Vader theme (Imperial March) - Star wars 
-  // Score available at https://musescore.com/user/202909/scores/1141521
-  // The tenor saxophone part was used
-  
-  NOTE_A4,-4, NOTE_A4,-4, NOTE_A4,16, NOTE_A4,16, NOTE_A4,16, NOTE_A4,16, NOTE_F4,8, REST,8,
-  NOTE_A4,-4, NOTE_A4,-4, NOTE_A4,16, NOTE_A4,16, NOTE_A4,16, NOTE_A4,16, NOTE_F4,8, REST,8,
-  NOTE_A4,4, NOTE_A4,4, NOTE_A4,4, NOTE_F4,-8, NOTE_C5,16,
-
-  NOTE_A4,4, NOTE_F4,-8, NOTE_C5,16, NOTE_A4,2,//4
-  NOTE_E5,4, NOTE_E5,4, NOTE_E5,4, NOTE_F5,-8, NOTE_C5,16,
-  NOTE_A4,4, NOTE_F4,-8, NOTE_C5,16, NOTE_A4,2,
-  
-  NOTE_A5,4, NOTE_A4,-8, NOTE_A4,16, NOTE_A5,4, NOTE_GS5,-8, NOTE_G5,16, //7 
-  NOTE_DS5,16, NOTE_D5,16, NOTE_DS5,8, REST,8, NOTE_A4,8, NOTE_DS5,4, NOTE_D5,-8, NOTE_CS5,16,
-
-  NOTE_C5,16, NOTE_B4,16, NOTE_C5,16, REST,8, NOTE_F4,8, NOTE_GS4,4, NOTE_F4,-8, NOTE_A4,-16,//9
-  NOTE_C5,4, NOTE_A4,-8, NOTE_C5,16, NOTE_E5,2,
-
-  NOTE_A5,4, NOTE_A4,-8, NOTE_A4,16, NOTE_A5,4, NOTE_GS5,-8, NOTE_G5,16, //7 
-  NOTE_DS5,16, NOTE_D5,16, NOTE_DS5,8, REST,8, NOTE_A4,8, NOTE_DS5,4, NOTE_D5,-8, NOTE_CS5,16,
-
-  NOTE_C5,16, NOTE_B4,16, NOTE_C5,16, REST,8, NOTE_F4,8, NOTE_GS4,4, NOTE_F4,-8, NOTE_A4,-16,//9
-  NOTE_A4,4, NOTE_F4,-8, NOTE_C5,16, NOTE_A4,2,
+  NOTE_E5, 8, NOTE_D5, 8, NOTE_FS4, 4, NOTE_GS4, 4, 
+  NOTE_CS5, 8, NOTE_B4, 8, NOTE_D4, 4, NOTE_E4, 4, 
+  NOTE_B4, 8, NOTE_A4, 8, NOTE_CS4, 4, NOTE_E4, 4,
+  NOTE_A4, 2, 
 };
 
 bool Music::add(uint16_t note, uint16_t delay)
@@ -106,13 +94,26 @@ bool Music::add(uint16_t note, uint16_t delay)
   }
   else
   {
-    analogWriteFreq(note);
-    analogWrite(TONE, 40);
-    m_volume = 39;
+    playNote(note, delay);
     m_bPlaying = true;
-    m_toneEnd = millis() + delay;
   }
   return true;
+}
+
+void Music::playNote(int note, int duration)
+{
+    if(note)
+    {
+      analogWriteFreq(note);
+      analogWrite(TONE, 40);
+      m_volume = 39;
+    }
+    else
+    {
+      analogWrite(TONE, 0);      
+      m_volume = 0;
+    } 
+    m_toneEnd = millis() + duration;
 }
 
 bool Music::play(int song)
@@ -134,24 +135,23 @@ bool Music::play(int song)
       pSong = melody_pacman;
       break;
     case 2:
-      tempo = 76;
-      notes = sizeof(melody_Brahms) / sizeof(melody_Brahms[0]) / 2;
-      pSong = melody_Brahms;
+      tempo = 120;
+      notes = sizeof(melody_PinkPanther) / sizeof(melody_PinkPanther[0]) / 2;
+      pSong = melody_PinkPanther;
       break;
     case 3:
-      tempo = 140;
-      notes = sizeof(melody_cantina) / sizeof(melody_cantina[0]) / 2;
-      pSong = melody_cantina;
+      tempo = 160;
+      notes = sizeof(melody_keyboardCat) / sizeof(melody_keyboardCat[0]) / 2;
+      pSong = melody_keyboardCat;
       break;
     case 4:
-      tempo = 120;
-      notes = sizeof(melody_imperial) / sizeof(melody_imperial[0]) / 2;
-      pSong = melody_imperial;
+      tempo = 180;
+      notes = sizeof(melody_Nokia) / sizeof(melody_Nokia[0]) / 2;
+      pSong = melody_Nokia;
       break;
     default:
       return false;
   }
-
   if(notes >= MUS_LEN - m_idx)
     notes = MUS_LEN - m_idx;
 
@@ -197,12 +197,9 @@ void Music::service()
     }
     return;
   }
-  if(m_idx == 0)
+  if(m_idx <= 0)
     return;
-  analogWriteFreq(m_arr[0].note);
-  analogWrite(TONE, 40);
-  m_volume = 39;
-  m_toneEnd = millis() + m_arr[0].ms;
+  playNote(m_arr[0].note, m_arr[0].ms);
   memcpy(m_arr, m_arr + 1, sizeof(musicArr) * MUS_LEN);
   m_idx--;
   m_bPlaying = true;
