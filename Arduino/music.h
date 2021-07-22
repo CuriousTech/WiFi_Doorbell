@@ -116,9 +116,10 @@ public:
   void service(void);
   bool play(int song);
 protected:
+  void playNote(int note, int duration);
 #define MUS_LEN 99
   musicArr m_arr[MUS_LEN+1];
-  uint8_t m_idx;
+  int16_t m_idx;
   int8_t m_volume;
   bool m_bPlaying;
   uint32_t m_toneEnd;
