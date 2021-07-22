@@ -598,7 +598,7 @@ void setup()
 #endif
 
 #ifdef LEDRING_H
-  ring.init(NEORING);
+  ring.init();
   ring.setIndicatorType(1);
 #endif
 
