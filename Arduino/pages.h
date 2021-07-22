@@ -171,17 +171,15 @@ startEvents()
   <button class="btn" id="e2" onclick="setEff(2)">Off</button>
   <button class="btn" id="e3" onclick="setEff(3)">rainbowCycle</button>
   <button class="btn" id="e4" onclick="setEff(4)">rainbow</button>
-  <button class="btn" id="e5" onclick="setEff(5)">theaterChase</button>
-  <button class="btn" id="e6" onclick="setEff(6)">theaterChaseRainbow</button>
-  <button class="btn" id="e7" onclick="setEff(7)">alert</button>
-  <button class="btn" id="e8" onclick="setEff(8)">glow</button>
-  <button class="btn" id="e9" onclick="setEff(9)">chaser</button>
-  <button class="btn" id="e10" onclick="setEff(10)">pendulum</button>
-  <button class="btn" id="e11" onclick="setEff(11)">orbit</button>
-  <button class="btn" id="e12" onclick="setEff(12)">clock</button>
-  <button class="btn" id="e13" onclick="setEff(13)">spiral</button>
-  <button class="btn" id="e14" onclick="setEff(14)">doubleSpiral</button>
-  <button class="btn" id="e15" onclick="setEff(15)">wings</button>
+  <button class="btn" id="e5" onclick="setEff(5)">alert</button>
+  <button class="btn" id="e6" onclick="setEff(6)">glow</button>
+  <button class="btn" id="e7" onclick="setEff(7)">chaser</button>
+  <button class="btn" id="e8" onclick="setEff(8)">pendulum</button>
+  <button class="btn" id="e9" onclick="setEff(9)">orbit</button>
+  <button class="btn" id="e10" onclick="setEff(10)">clock</button>
+  <button class="btn" id="e11" onclick="setEff(11)">spiral</button>
+  <button class="btn" id="e12" onclick="setEff(12)">doubleSpiral</button>
+  <button class="btn" id="e13" onclick="setEff(13)">wings</button>
   </div>
 </div>
 <div class="dropdown">
