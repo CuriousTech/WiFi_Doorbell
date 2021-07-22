@@ -1,16 +1,15 @@
 #include "LedRing.h"
 #include <TimeLib.h>
 
-void LedRing::init(int pin)
+void LedRing::init()
 {
-  strip = Adafruit_NeoPixel(LED_CNT, pin, NEO_GRB + NEO_KHZ800);
-  strip.begin();
-  strip.setBrightness(40);
-  strip.show(); // Initialize all pixels to 'off'
-  clear();
-  m_Color[0] = strip.Color( 0, 0, 127);
-  m_Color[1] = strip.Color(30,  0, 0);
-  m_Color[2] = strip.Color(40, 40, 0);
+  LEDS.addLeds<WS2812B, LED_PIN, GRB>(m_leds, LED_CNT);
+//  LEDS.setMaxPowerInVoltsAndMilliamps(uint8_t volts, uint32_t milliamps);
+  LEDS.setBrightness(50);
+  LEDS.clear();
+  m_Color[0].setRGB( 0, 0, 127);
+  m_Color[1].setRGB(30,  0, 0);
+  m_Color[2].setRGB(40, 40, 0);
 }
 
 void LedRing::setEffect(uint8_t ef)
@@ -33,13 +32,13 @@ void LedRing::setIndicatorType(int n)
 void LedRing::Color(uint8_t n, uint8_t r, uint8_t g, uint8_t b)
 {
   n &= 3;
-  m_Color[n] = strip.Color(r, g, b);
+  m_Color[n].setRGB(r, g, b);
 }
 
 // Set all pixel to given color
 void LedRing::setColor(uint8_t r, uint8_t g, uint8_t b)
 {
-  strip.fill(strip.Color(r, g, b), 0, LED_CNT);
+  LEDS.showColor(CRGB(r, g, b));
   m_Effect = ef_Hold;
 }
 
@@ -75,7 +74,7 @@ void LedRing::service()
     lastMode = m_Effect;
   }
 
-  clear();
+  LEDS.clearData();
   if(m_Effect != ef_chaser && m_IndCnt) // composite effect and count blinker
     switch(m_IndType)
     {
@@ -86,7 +85,7 @@ void LedRing::service()
         countspin(neoCnt, m_IndCnt);
         break;
     }
-    
+
   switch(m_Effect)
   {
     case ef_Hold: // no update
@@ -100,17 +99,11 @@ void LedRing::service()
     case ef_rainbow:
       rainbow(neoCnt);
       break;
-    case ef_theaterChase:
-      theaterChase(m_Color[0], 40, neoCnt);
-      break;
-    case ef_theaterChaseRainbow:
-      theaterChaseRainbow(30, neoCnt);
-      break;
     case ef_alert:
       if(neoCnt & 1)
         colorWipe(m_Color[1], 1);
       else
-        colorWipe(strip.Color(0, 0, 0), 1);
+        colorWipe(CRGB(0, 0, 0), 1);
       break;
     case ef_glow:
       glow(neoCnt);
@@ -140,7 +133,7 @@ void LedRing::service()
       wings(neoCnt);
       break;
   }
-  show();
+  FastLED.show();
   if(m_effectTimer) // automatically revert to old effect
   {
     if(neoCnt > m_effectTimer)
@@ -154,15 +147,18 @@ void LedRing::service()
 // glowy thing
 void LedRing::glow(uint16_t j)
 {
-  j <<= 2;
-  j &= 0xFF;
-  if(j > 127) j = 255-j;
-  uint32_t m = j | (j<<8) | (j<<16);
+  int n = (j<<2) & 0xFF;
+
+  if( n > 127) n = 255 - n;
+
   for(int i = 0; i < LED_CNT; i++)
-    m_leds[i] = strip.gamma32(m_Color[0] & m);
+  {
+    m_leds[i] = m_Color[0];
+    m_leds[i].nscale8(n);
+  }
 }
 
-// cnout + spinner
+// count + spinner
 void LedRing::chaser(uint16_t n, uint8_t cnt)
 {
   n %= LED_CNT;
@@ -222,14 +218,14 @@ void LedRing::pendulum()
   static int8_t m = 2;
   static uint8_t pt = LED_CNT;
 #define TRAIL_CNT 5
-  static _rgb last[TRAIL_CNT];
+  static CRGB last[TRAIL_CNT];
   static uint8_t trail[TRAIL_CNT];
   static uint8_t lastPos;
 
   uint8_t realpt = pt % LED_CNT;
   setPixel(realpt, m_Color[0]);
   for(int i = 0; i < TRAIL_CNT; i++)
-    setPixel(trail[i], last[i].c);
+    setPixel(trail[i], last[i]);
   if(lastPos != realpt)
   {
     lastPos = realpt;
@@ -237,11 +233,11 @@ void LedRing::pendulum()
     {
       trail[i] = trail[i-1];
       last[i] = last[i-1];
-      fade(last[i], 70);
+      last[i].nscale8(180);
     }
     trail[0] = realpt;
-    last[0].c = m_Color[0];
-    fade(last[0], 70);
+    last[0] = m_Color[0];
+    last[0].nscale8(180);
   }
 
   if(--dly == 0)
@@ -257,14 +253,6 @@ void LedRing::pendulum()
       dir = -dir;
     mdir = -mdir; // reverse momentum at fastest or slowest
   }
-}
-
-// reduce brightness by percent
-void LedRing::fade(_rgb &c, uint8_t perc)
-{
-  c.r = c.r * perc / 100;
-  c.g = c.g * perc / 100;
-  c.b = c.b * perc / 100;
 }
 
 // 2 different speeds and directions, rainbow
@@ -290,7 +278,7 @@ void LedRing::light(uint8_t level)
   {
     oldMode = m_Effect;
     m_Effect = ef_Hold;
-    colorWipe(strip.Color(level, level, level), 10);
+    colorWipe(CRGB(level, level, level), 10);
   }
   else
   {
@@ -298,7 +286,7 @@ void LedRing::light(uint8_t level)
   }
 }
 
-void LedRing::clock(uint32_t c1, uint32_t c2, uint16_t n)
+void LedRing::clock(CRGB c1, CRGB c2, uint16_t n)
 {
   static uint8_t lastsec;
   static uint8_t cnt;
@@ -317,9 +305,9 @@ void LedRing::clock(uint32_t c1, uint32_t c2, uint16_t n)
   {
     if(i == s)
     { // Cheap transition
-      setPixel(i, strip.Color(cnt, cnt, cnt) );
-      uint32_t c3 = strip.Color(127-cnt, 127-cnt, 127-cnt);
-      setPixel((i+LED_CNT-1) % LED_CNT, strip.gamma32(c3) );
+      setPixel(i, CRGB(cnt, cnt, cnt) );
+      CRGB c3 = CRGB(127-cnt, 127-cnt, 127-cnt);
+      setPixel((i+LED_CNT-1) % LED_CNT, c3 );
     }
     if(i == h)
       setPixel(i, c1);
@@ -334,14 +322,13 @@ void LedRing::clock(uint32_t c1, uint32_t c2, uint16_t n)
 void LedRing::spiral(uint16_t n)
 {
   int8_t e = n % LED_CNT;
-  _rgb c;
-  c.c = m_Color[0];
+  CRGB c = m_Color[0];
 
   for(int i = 0; i < LED_CNT; i++)
   {
-    setPixel(e, c.c);
+    setPixel(e, c);
     if( --e < 0) e += LED_CNT;
-    fade(c, 75);
+    c.nscale8(200);
   }
 }
 
@@ -349,41 +336,40 @@ void LedRing::spiral(uint16_t n)
 void LedRing::doubleSpiral(uint16_t n)
 {
   int8_t e = LED_CNT - (n>>1) % LED_CNT;
-  _rgb c[2];
+  CRGB c[2];
 
-  c[0].c = m_Color[0];
-  c[1].c = m_Color[1];
+  c[0] = m_Color[0];
+  c[1] = m_Color[1];
 
   for(int i = 0; i < LED_CNT; i++)
   {
-    setPixel(e+i, c[0].c);
-    setPixel(e+i + (LED_CNT/2), c[1].c);
-    fade(c[0], 70);
-    fade(c[1], 70);
+    setPixel(e+i, c[0]);
+    setPixel(e+i + (LED_CNT/2), c[1]);
+    c[0].nscale8(200);
+    c[1].nscale8(200);
   }
 }
 
 void LedRing::wings(uint16_t n)
 {
-  static bool bDir = true;
+  static bool bDir;
   static int16_t fader = 0;
-  static uint8_t pt = 0;
+  static int8_t pt = 0;
 
-  _rgb c;
-  c.c = m_Color[1];
+  CRGB c = m_Color[1];
 
   int i;
   for(i = 0; i < pt; i++)
   {
-    setPixel((LED_CNT / 2) + i, c.c);
-    setPixel((LED_CNT / 2) - i, c.c);
+    m_leds[((LED_CNT / 2) + i) % LED_CNT] = c;
+    m_leds[((LED_CNT / 2) - i) % LED_CNT] = c;
   }
   if(bDir)
   {
     fader += 10;
     if(fader > 90)
     {
-      if(pt < LED_CNT/2+1)
+      if(pt < LED_CNT/2)
       {
         pt++;
         fader = 0;
@@ -399,7 +385,7 @@ void LedRing::wings(uint16_t n)
     fader -= 10;
     if(fader <= 10)
     {
-      if(pt > 0)
+      if(pt > 1)
       {
         pt--;
         fader = 90;
@@ -408,34 +394,22 @@ void LedRing::wings(uint16_t n)
         bDir = true;
     }
   }
-  fade(c, (uint8_t)fader);
-  setPixel((LED_CNT / 2) + i, strip.gamma32(c.c) );
-  setPixel((LED_CNT / 2) - i, strip.gamma32(c.c) );
+  c.nscale8(fader);
+  m_leds[((LED_CNT / 2) + i) % LED_CNT] = c;
+  m_leds[((LED_CNT / 2) - i) % LED_CNT] = c;
 }
 
-void LedRing::clear()
-{
-  memset(m_leds, 0, sizeof(m_leds));
-}
-
-void LedRing::setPixel(uint8_t i, uint32_t c)
+void LedRing::setPixel(uint8_t i, CRGB c)
 {
   m_leds[i % LED_CNT] |= c;
 }
 
-void LedRing::show()
-{
-  for(int i = 0; i < LED_CNT; i++)
-    strip.setPixelColor(i, m_leds[i]);
-  strip.show();
-}
-
 // Fill the dots one after the other with a color
-void LedRing::colorWipe(uint32_t c, uint8_t wait)
+void LedRing::colorWipe(CRGB c, uint8_t wait)
 {
   for(uint16_t i=0; i<LED_CNT; i++) {
     setPixel(i, c);
-    strip.show();
+    FastLED.show();
     delay(wait);
   }
 }
@@ -458,54 +432,18 @@ void LedRing::rainbowCycle()
   j++;
 }
 
-//Theatre-style crawling lights.
-void LedRing::theaterChase(uint32_t c, uint8_t wait, uint16_t j)
-{
-  for (int q=0; q < 3; q++) {
-    for (uint16_t i=0; i < LED_CNT; i=i+3)
-    {
-      m_leds[i+q] = 0;
-      setPixel(i+q, c);    //turn every third pixel on
-    }
-    show();
-
-    delay(wait);
-
-    for (uint16_t i=0; i < LED_CNT; i=i+3)
-      m_leds[i+q] = 0;        //turn every third pixel off
-  }
-}
-
-//Theatre-style crawling lights with rainbow effect
-void LedRing::theaterChaseRainbow(uint8_t wait, uint16_t j)
-{
-  for (int q=0; q < 3; q++) {
-    for (uint16_t i=0; i < LED_CNT; i=i+3)
-    {
-      m_leds[i+q] = 0;
-      setPixel(i+q, Wheel( (i+j) % 255));    //turn every third pixel on
-    }
-    show();
-
-    delay(wait);
-
-    for (uint16_t i=0; i < LED_CNT; i=i+3)
-      m_leds[i+q] = 0;        //turn every third pixel off
-  }
-}
-
 // Input a value 0 to 255 to get a color value.
 // The colours are a transition r - g - b - back to r.
-uint32_t LedRing::Wheel(byte WheelPos)
+CRGB LedRing::Wheel(byte WheelPos)
 {
   WheelPos = 255 - WheelPos;
   if(WheelPos < 85) {
-    return strip.Color(255 - WheelPos * 3, 0, WheelPos * 3);
+    return CRGB(255 - WheelPos * 3, 0, WheelPos * 3);
   }
   if(WheelPos < 170) {
     WheelPos -= 85;
-    return strip.Color(0, WheelPos * 3, 255 - WheelPos * 3);
+    return CRGB(0, WheelPos * 3, 255 - WheelPos * 3);
   }
   WheelPos -= 170;
-  return strip.Color(WheelPos * 3, 255 - WheelPos * 3, 0);
+  return CRGB(WheelPos * 3, 255 - WheelPos * 3, 0);
 }
