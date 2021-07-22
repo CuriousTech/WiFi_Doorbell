@@ -69,12 +69,12 @@ void WiFiManager::autoConnect(char const *apName, const char *pPass) {
 
 boolean WiFiManager::hasConnected(void)
 {
-  int cnt = 0;
+  int cnt = 16;
   for(int c = 0; c < 500; c++)
   {
-    if(++cnt >= 8)
+    if(--cnt < 0)
     {
-      cnt = 0;
+      cnt = 8;
       if (WiFi.status() == WL_CONNECTED)
       {
         Serial.println("Connected");
@@ -98,8 +98,8 @@ boolean WiFiManager::hasConnected(void)
     display.updateChunk();
 #endif
 #ifdef LEDRING_ENABLE
-//  ring.setIndicatorCount( c / 20);
- // ring.service();
+//    ring.setIndicatorCount( c / 20);
+//    ring.service();
 #endif
   }
   DEBUG_PRINT("");
