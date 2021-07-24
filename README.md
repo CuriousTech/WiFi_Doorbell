@@ -1,9 +1,9 @@
 # WiFi Doorbell Chime
 
-This is a very small doorbell chime based closely on the older version for displaying weather and sending notifications, but eliminates the old mechanical chime. The additional parts are a MOSFET to produce PWM sound, a resistor to eliminate the chime coil and allow parasitic power to supply a smart doorbell or button light, and a WS2812B LED ring, but is still compatible with the old project. The resistor should be about 100 ohms to allow power to the smart doorbell, but I don't know the current rating for them all. A 5W should be sufficient. It's connected to the transformer while the button is pressed, so it needs to handle the current for that time. I have a 12VAC transformoer, but many will have 24V, which is much higher.
-
-Simple operation for detection: The way this circuit operates is when the button is pressed, the optocoupler is disalbled, causing the GPIO port (with internal pullup) to go high for longer than 60Hz. The optocoupler vf is 1.5V up to 50mA, but should be 10mA. The limiting resistor value will be different for 12V or 24V, so use the proper value.  
-
+This is a very small doorbell chime based closely on the older version for displaying weather and sending notifications, but eliminates the old mechanical chime. The additional parts are a MOSFET to produce PWM sound, a resistor to eliminate the chime coil and allow parasitic power to supply a smart doorbell or button light, and a WS2812B LED ring, but is still compatible with the old project. The resistor should be about 100 ohms to allow power to the smart doorbell, but I don't know the current rating for them all. A 5W should be sufficient. It's connected to the transformer while the button is pressed, so it needs to handle the current for that time. I have a 12VAC transformoer, but many will have 24V, which is much higher.  
+  
+Simple operation for detection: The way this circuit operates is when the button is pressed, the optocoupler is disalbled (parrallel to the light in the button), causing the GPIO port (with internal pullup) to go low. The optocoupler vf is 1.2V up to 50mA, but works at 10mA or maybe less. The limiting resistor value will be different for 12V or 24V, so use the proper value. 1K-1K2 is fine for 12V, 2K2-2K4 should be good for 24V, and likely works for 12V as well.  
+  
 The 3D printed parts have 2 options: A plastic grill or a retainer ring to wrap cloth around and glue. I prefer the latter. The diffuser ring is printed in clear.  More to come soon...   
 
 ![esp07doorbell2](http://www.curioustech.net/images/wifidoorbellchime.jpg)  
