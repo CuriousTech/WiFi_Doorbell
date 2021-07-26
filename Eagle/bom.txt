@@ -19,13 +19,16 @@ C2     1206 2.2uF
 C3     0805 16V 10uF 08056C106KAT2A
 C4-C7  0805 16V 0.1uF
 
-OK1            VOS615A-3T (if out of stock, try 1T, 4T, etc.)
+OK1    VOS615A-3T (if out of stock, try 1T, 4T, etc.)
 
 R1-R3  0805 10K
+R4     0805 2K2
 R5,R6  0805 4K7
 R9     0805 1K
-D1-D4,D6 (or D7) SOD-123-2 FSV360FP
+D1-D4,D6,D7 SOD-123-2 FSV360FP
 Q1     SOT-23-3 N-Channel PMV20ENR
 3V3    MCP1755T-3302E/OT or MCP1802T-3302I/OT
+
+TH resisistor (simulates doorbell coil for button light or smart doorbell)
 
 X1  Don't use headers or connectors. Too big. Wire direct.
