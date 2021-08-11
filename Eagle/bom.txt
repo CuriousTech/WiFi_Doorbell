@@ -6,7 +6,7 @@ For existing doorbell display (old)
 
 For new mini doorbell chime
   WS2812B 5050 RGB 24 LED RING 2.6" (65mm)
-  36x4.6mm speaker AS03608MR-SC-R
+  36x4.6mm speaker SM360532-3
 
 4mm x 3mm tactile button
 
