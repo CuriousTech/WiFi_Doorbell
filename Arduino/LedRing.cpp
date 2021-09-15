@@ -1,11 +1,13 @@
 #include "LedRing.h"
 #include <TimeLib.h>
+#include "eemem.h"
+
+extern void WsPrint(String s);
 
 void LedRing::init()
 {
   LEDS.addLeds<WS2812B, LED_PIN, GRB>(m_leds, LED_CNT);
 //  LEDS.setMaxPowerInVoltsAndMilliamps(uint8_t volts, uint32_t milliamps);
-  LEDS.setBrightness(50);
   LEDS.clear();
   m_Color[0].setRGB( 0, 0, 127);
   m_Color[1].setRGB(30,  0, 0);
@@ -36,23 +38,58 @@ void LedRing::Color(uint8_t n, uint8_t r, uint8_t g, uint8_t b)
 }
 
 // Set all pixel to given color
-void LedRing::setColor(uint8_t r, uint8_t g, uint8_t b)
+void LedRing::setColor(uint8_t r, uint8_t g, uint8_t b, uint8_t brightness)
 {
+  m_brightness = brightness;
+  LEDS.setBrightness(brightness);
   LEDS.showColor(CRGB(r, g, b));
   m_Effect = ef_Hold;
 }
 
-void LedRing::alert(bool bOn)
+void LedRing::alert(uint16_t sec)
 {
-  if(bOn)
+  LEDS.setBrightness(50);
+  m_brightness = 50;
+  if(sec)
   {
     m_oldEffect = m_Effect;
     m_Effect = ef_alert;
+    m_alertTimer = sec;
   }
   else
   {
     m_Effect = m_oldEffect;    
   }
+}
+
+// White light at level (0 = off)
+void LedRing::light(uint8_t level)
+{
+  if(level)
+  {
+    if(m_Effect != ef_Hold)
+      m_lightRevert = m_Effect;
+    LEDS.setBrightness(level);
+    m_brightness = level;
+    m_Effect = ef_Hold;
+    colorWipe(CRGB(127, 127, 127), 10);
+  }
+  else
+  {
+    m_Effect = m_lightRevert;
+  }
+}
+
+void LedRing::lightTimer(uint16_t sec)
+{
+  m_lightTimer = sec;
+}
+
+void LedRing::setBrightness(uint8_t n)
+{
+  LEDS.setBrightness(n);
+  m_brightness = n;
+  ee.bright[m_Effect] = n;
 }
 
 void LedRing::service()
@@ -72,9 +109,12 @@ void LedRing::service()
   {
     neoCnt = 0;
     lastMode = m_Effect;
+    m_brightness = ee.bright[m_Effect];
+    LEDS.setBrightness(m_brightness);
   }
 
   LEDS.clearData();
+
   if(m_Effect != ef_chaser && m_IndCnt) // composite effect and count blinker
     switch(m_IndType)
     {
@@ -85,6 +125,19 @@ void LedRing::service()
         countspin(neoCnt, m_IndCnt);
         break;
     }
+
+  static uint8_t s;
+  if(s != second())
+  {
+    s = second();
+    if(m_lightTimer)
+      if(--m_lightTimer == 0)
+        m_Effect = m_lightRevert;
+
+    if(m_alertTimer)
+      if(--m_alertTimer == 0)
+        m_Effect = m_oldEffect;
+  }
 
   switch(m_Effect)
   {
@@ -100,10 +153,10 @@ void LedRing::service()
       rainbow(neoCnt);
       break;
     case ef_alert:
-      if(neoCnt & 1)
-        colorWipe(m_Color[1], 1);
+      if(neoCnt & 2)
+        colorWipe(m_Color[1], 3);
       else
-        colorWipe(CRGB(0, 0, 0), 1);
+        colorWipe(CRGB(0, 0, 0), 3);
       break;
     case ef_glow:
       glow(neoCnt);
@@ -270,22 +323,6 @@ void LedRing::orbit(uint16_t n)
   }
 }
 
-// White light at level (0 = off)
-void LedRing::light(uint8_t level)
-{
-  static uint8_t oldMode;
-  if(level)
-  {
-    oldMode = m_Effect;
-    m_Effect = ef_Hold;
-    colorWipe(CRGB(level, level, level), 10);
-  }
-  else
-  {
-    m_Effect = oldMode;
-  }
-}
-
 void LedRing::clock(CRGB c1, CRGB c2, uint16_t n)
 {
   static uint8_t lastsec;
@@ -316,6 +353,14 @@ void LedRing::clock(CRGB c1, CRGB c2, uint16_t n)
   }
   if(cnt < 125)
     cnt++;
+}
+
+// From FastLED
+void LedRing::addGlitter( fract8 chanceOfGlitter) 
+{
+  if( random8() < chanceOfGlitter) {
+    m_leds[ random16(LED_CNT) ] += CRGB::White;
+  }
 }
 
 // fading trail
