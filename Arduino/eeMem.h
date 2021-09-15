@@ -22,7 +22,9 @@ struct eeSet // EEPROM backed data
   uint8_t  hostIP[4];
   uint16_t hostPort;
   uint8_t  melody;
-  uint8_t  res[8];
+  uint8_t  effect;
+  uint8_t  bright[24];
+  uint8_t  res[14];
 };
 
 class eeMem
