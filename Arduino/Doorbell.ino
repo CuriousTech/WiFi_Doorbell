@@ -62,6 +62,8 @@ int serverPort = 80; // port to access this device
 #define SCL       13
 #define SDA       12
 
+const char doorbell[] = "Doorbell";
+
 uint32_t lastIP;
 int nWrongPass;
 UdpTime utime;
@@ -143,6 +145,8 @@ String dataJson() // timed/instant pushed data
   js.Var("wind", String(fWindSpeed, 1) + " " + windDeg + "deg" );
   js.Var("m", ee.melody);
   js.Array("db", doorbellTimes, DB_CNT);
+  js.Var("ef", ee.effect);
+  js.Var("br", ring.m_brightness);
   return js.Close();
 
 // for(int i = 0; szWeather[i][0] && i < 4; i++)
@@ -151,6 +155,12 @@ String dataJson() // timed/instant pushed data
 //    s += szWeather[i];
 //  }
 }
+
+void WsPrint(String s)
+{
+    ws.textAll(s);
+}
+
 
 void parseParams(AsyncWebServerRequest *request)
 {
@@ -198,65 +208,85 @@ void parseParams(AsyncWebServerRequest *request)
 
   lastIP = ip;
 
+  const char Names[][10]={
+    "OLED", // 0
+    "reset",
+    "loc",
+    "owkey",
+    "pbtoken",
+    "ssid",
+    "pass",
+    "notifip",
+    "notifpath", // 10
+    "notifport",
+    "play",
+    "light",
+    "lighttime",
+  };
+
   for ( uint8_t i = 0; i < request->params(); i++ ) {
     AsyncWebParameter* p = request->getParam(i);
     p->value().toCharArray(temp, 100);
     String s = wifi.urldecode(temp);
     bool bValue = (s == "true" || s == "1") ? true:false;
 //    Serial.println( i + " " + server.argName ( i ) + ": " + s);
- 
-    switch( p->name().charAt(0) )
+
+    uint8_t idx;
+    for(idx = 0; Names[idx][0]; idx++)
+      if( p->name().equals(Names[idx]) )
+        break;
+
+    switch( idx )
     {
-      case 'O': // OLED
+      case 0: // OLED
 #ifdef OLED_EBALE
-          ee.bEnableOLED = bValue;
-          if(bValue) bStartOLED = true;
+        ee.bEnableOLED = bValue;
+        if(bValue) bStartOLED = true;
 #endif
-          break;
-      case 'P': // PushBullet
-          {
-            int which = (tolower(p->name().charAt(1) ) == '1') ? 1:0;
-            ee.bEnablePB[which] = bValue;
-          }
-          break;
-      case 'M': // Motion
-          ee.bMotion = bValue;
-          break;
-      case 'R': // reset
-          doorbellTimeIdx = 0;
+        break;
+      case 1: // reset
+        doorbellTimeIdx = 0;
 #ifdef LEDRING_H
-          ring.setIndicatorCount(doorbellTimeIdx);
+        ring.setIndicatorCount(doorbellTimeIdx);
 #endif
-          break;
-      case 'L': // location
-          s.toCharArray(ee.location, sizeof(ee.location));
-          break;
-      case 'w': // openweathermap key
-          s.toCharArray(ee.owKey, sizeof(ee.owKey));
-          break;
-      case 'b': // pushbullet token
-          s.toCharArray(ee.pbToken, sizeof(ee.pbToken));
-          break;
-      case 's': // ssid
-          s.toCharArray(ee.szSSID, sizeof(ee.szSSID));
-          break;
-      case 'p': // pass
-          wifi.setPass(s.c_str());
-          break;
-      case 'n': // notifier   /s?key=password&ni="192.168.0.102"&np="/test"&no=82
-          switch(p->name().charAt(1))
-          {
-            case 'i': // ni=
-              strncpy(ee.szNotifIP, s.c_str(), sizeof(ee.szNotifIP));
-              break;
-            case 'p': // np=
-              strncpy(ee.szNotifPath, s.c_str(), sizeof(ee.szNotifPath));
-              break;
-            case 'o': // no=
-              ee.NotifPort = atoi(s.c_str());
-              break;
-          }
-          break;
+        break;
+      case 2: // location
+        s.toCharArray(ee.location, sizeof(ee.location));
+        break;
+      case 3: // openweathermap key
+        s.toCharArray(ee.owKey, sizeof(ee.owKey));
+        break;
+      case 4: // pushbullet token
+        s.toCharArray(ee.pbToken, sizeof(ee.pbToken));
+        break;
+      case 5: // ssid
+        s.toCharArray(ee.szSSID, sizeof(ee.szSSID));
+        break;
+      case 6: // pass
+        wifi.setPass(s.c_str());
+        break;
+      case 7: // notifip   /s?key=password&notifip="192.168.0.102"&notifpath="/test"&notifport=82
+         strncpy(ee.szNotifIP, s.c_str(), sizeof(ee.szNotifIP));
+         break;
+      case 8: // path
+         strncpy(ee.szNotifPath, s.c_str(), sizeof(ee.szNotifPath));
+         break;
+      case 9: // notifport
+         ee.NotifPort = atoi(s.c_str());
+         break;
+      case 10: // play
+         mus.play(s.toInt());
+         break;
+      case 11: // light
+#ifdef LEDRING_H
+         ring.light(s.toInt());
+#endif
+        break;
+      case 12: // lighttime
+#ifdef LEDRING_H
+         ring.lightTimer(s.toInt());
+#endif
+         break;
     }
   }
 }
@@ -374,6 +404,9 @@ const char *jsonListCmd[] = { "cmd", // WebSocket command list
   "play",
   "cnt", // LED count
   "m", // melody for doorbell
+  "br", // brightness
+  "light",
+  "lighttime",
   NULL
 };
 
@@ -428,16 +461,35 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
         case 8: // effect
 #ifdef LEDRING_H
           ring.setEffect(iValue);
+          ee.effect = iValue;
 #endif
           break;
         case 9: // music
+          ee.melody = iValue;
           mus.play(iValue);
           break;
         case 10: // indicator count
+#ifdef LEDRING_H
           ring.setIndicatorCount(iValue);
+#endif
           break;
         case 11: // melody
           ee.melody = iValue;
+          break;
+        case 12: // brightnes
+#ifdef LEDRING_H
+          ring.setBrightness(iValue);
+#endif
+          break;
+        case 13: // light
+#ifdef LEDRING_H
+          ring.light(iValue);
+#endif
+          break;
+        case 14: // lighttime
+#ifdef LEDRING_H
+          ring.lightTimer(iValue);
+#endif
           break;
       }
       break;
@@ -495,24 +547,26 @@ void sendState()
   if(ssCnt < 20) ssCnt = 59;
 }
 
+volatile bool bDoorBellTriggered;
+
 // called when doorbell rings (or test)
 void doorBell()
 {
 //  Serial.println("Doorbell");
+  String s = "alert;Doorbell ";
+  s += timeToTxt( doorbellTimes[doorbellTimeIdx] );
+  ws.textAll(s);
 
   unsigned long newtime = now() - (3600 * (ee.tz + utime.getDST()));
 
-  if( newtime - dbTime < 10) // ignore bounces and double taps
+  if( newtime - dbTime < 2) // ignore bounces and double taps (2 seconds)
   {
     dbTime = newtime; // latest trigger
     return;
   }
 
-//  Serial.println("Doorbell 2");
   doorbellTimes[doorbellTimeIdx] = newtime;
 
-  String s = "Doorbell " + timeToTxt( doorbellTimes[doorbellTimeIdx] );
-  ws.textAll(String("alert;") + s);
   sendState();
   if(ee.szNotifIP[0])
     jsNotif.begin(ee.szNotifIP, ee.szNotifPath, ee.NotifPort, false);
@@ -532,6 +586,7 @@ void doorBell()
 
 #ifdef LEDRING_H
   ring.setIndicatorCount(doorbellTimeIdx);
+  ring.alert(4);
 #endif
   mus.play(ee.melody); // play ding-dong
   dbTime = newtime; // latest trigger
@@ -551,7 +606,6 @@ void motion()
 
   String s = String("alert;Motion ") + timeToTxt( newtime );
   ws.textAll(s);
-  s = String();
   sendState();
   // make sure it's more than 3 mins between triggers to send a PB
   if( newtime - pirTime > 3 * 60)
@@ -561,8 +615,6 @@ void motion()
   }
   pirTime = newtime; // latest trigger
 }
-
-volatile bool bDoorBellTriggered = false;
 
 void ICACHE_RAM_ATTR doorbellISR()
 {
@@ -578,17 +630,12 @@ void ICACHE_RAM_ATTR pirISR()
 
 void setup()
 {
-  const char doorbell[] = "Doorbell";
   Serial.begin(115200);
   Serial.println();
 
 //  pinMode(ESP_LED, OUTPUT);
   pinMode(DOORBELL, INPUT_PULLUP);
-  attachInterrupt(DOORBELL, doorbellISR, FALLING);
   pinMode(PIR, INPUT_PULLUP);
-  attachInterrupt(PIR, pirISR, FALLING);
-  pinMode(TONE, OUTPUT);
-  digitalWrite(TONE, LOW);
 
 #ifdef OLED_ENABLE
   // initialize dispaly
@@ -597,18 +644,14 @@ void setup()
   display.display();
 #endif
 
+  WiFi.hostname(doorbell);
+  wifi.autoConnect(doorbell, controlPassword);
+
 #ifdef LEDRING_H
   ring.init();
   ring.setIndicatorType(1);
+  ring.service();
 #endif
-
-  WiFi.hostname(doorbell);
-  wifi.autoConnect(doorbell, controlPassword);
-  if(!wifi.isCfg())
-  {
-    if ( !MDNS.begin ( doorbell ) )
-      Serial.println ( "MDNS responder error" );
-  }
 
   // attach AsyncWebSocket
   ws.onEvent(onWsEvent);
@@ -658,9 +701,8 @@ void setup()
         json += js.Close();
       }
       WiFi.scanDelete();
-      if(WiFi.scanComplete() == -2){
+      if(WiFi.scanComplete() == -2)
         WiFi.scanNetworks(true);
-      }
     }
     json += "]";
     request->send(200, "text/json", json);
@@ -682,16 +724,15 @@ void setup()
   server.begin();
   jsonParse.addList(jsonListCmd);
 
-  MDNS.addService("esp", "tcp", serverPort);
-
 #ifdef OTA_ENABLE
   ArduinoOTA.begin();
 #endif
-  if(wifi.isCfg() == false)
-    utime.start();
+
 #ifdef LEDRING_H
-  ring.setEffect(ef_spiral);
+  ring.setEffect(ef_chaser);
 #endif
+  attachInterrupt(DOORBELL, doorbellISR, FALLING);
+  attachInterrupt(PIR, pirISR, FALLING);
 }
 
 void loop()
@@ -702,12 +743,21 @@ void loop()
 #ifdef OTA_ENABLE
   ArduinoOTA.handle();
 #endif
+
+  wifi.service();
   if(!wifi.isCfg())
   {
-    if(utime.check(ee.tz));
-//      ring.setEffect(ef_clock);
+    if(utime.check(ee.tz))
+      ring.setEffect(ee.effect);
   }
-  
+
+  if(wifi.connectNew())
+  {
+    MDNS.begin( doorbell );
+    MDNS.addService("esp", "tcp", serverPort);
+    utime.start();
+  }
+
   if(bPirTriggered)
   {
     bPirTriggered = false;
@@ -743,7 +793,7 @@ void loop()
 
       if (hour_save != hour())  // update our time daily (at 2AM for DST)
       {
-        if( (hour_save = hour()) == 2)
+        if( (hour_save = hour()) == 2 && !wifi.isCfg())
           utime.start();
         eemem.update(); // update EEPROM if needed while we're at it (give user time to make many adjustments)
       }
@@ -802,8 +852,8 @@ void loop()
   display.updateChunk();
 #else
   display.display();
-#endif
-#endif
+#endif // LEDRING_H
+#endif // OLED
 }
 
 void draw()
@@ -862,11 +912,15 @@ void draw()
         s = timeFmt();
         break;
       case 1:
-        s = dayShortStr(weekday());
-        s += " ";
+        s = "  ";
+        s += dayShortStr(weekday());
+        s += "  ";
         s += String(day());
-        s += " ";
+        s += "  ";
         s += monthShortStr(month());
+        break;
+      case 2:
+        s = szWeather[0];
         break;
     }
     d++;
