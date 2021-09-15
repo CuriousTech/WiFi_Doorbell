@@ -82,6 +82,7 @@ ws.onmessage = function(evt) {
   a.MOT.value=bmot?'ON ':'OFF'
   a.PB0.value=pb0?'ON ':'OFF'
   a.PB1.value=pb1?'ON ':'OFF'
+  a.br.value=d.br
   a.temp.innerHTML=d.temp+'&deg '+d.rh+'%'
   a.wea.innerHTML=d.weather
   a.alert.innerHTML=d.alert
@@ -119,6 +120,7 @@ setVar('mot', bmot?1:0)
 a.MOT.value=bmot?'ON ':'OFF'
 }
 function setLoc(){setVar('loc', a.loc.value)}
+function setBr(){setVar('br', a.br.value)}
 function sendMus(n){setVar('play', n)}
 function setEff(n){setVar('ef', n)}
 function setCnt(n){setVar('cnt', n)}
@@ -152,7 +154,7 @@ startEvents()
 <tr><td>Motion:</td><td><div id="mot"></div></td></tr>
 <tr><td>Display:</td><td><input type="button" value="OFF" id="OLED" onClick="{oled()}"> Mot <input type="button" value="OFF" id="MOT" onClick="{motTog()}"></td></tr>
 <tr><td>PushBullet:</td><td><input type="button" value="OFF" id="PB0" onClick="{pbToggle0()}"> Mot <input type="button" value="OFF" id="PB1" onClick="{pbToggle1()}"></td></tr>
-<tr><td>Test:</td><td>
+<tr><td>Settings:</td><td>
 <div class="dropdown">
   <button class="dropbtn">Music</button>
   <div class="dropdown-content">
@@ -193,6 +195,7 @@ startEvents()
 </div>
 </td></tr>
 <tr><td>Location:</td><td><input id='loc' type=text size=8 value=''><input value="Set" type='button' onclick="{setLoc()}"></td></tr>
+<tr><td>Brightnes:</td><td><input id='br' type=text size=8 value=''><input value="Set" type='button' onclick="{setBr()}"></td></tr>
 </table>
 <div id="wea"></div>
 <div id="alert"></div>
