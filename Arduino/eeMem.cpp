@@ -6,18 +6,20 @@
 eeSet ee = { sizeof(eeSet), 0xAAAA,
   "",  // saved SSID (set these to bypass the SoftAP config)
   "", // router password
-  -5, // TZ
-  "4291945", // "location ID"
-  {false, false},  // Enable pushbullet
-  true,   // Enable OLED
+  -5,             // TZ
+  "4291945",      // "location ID"
+  {false, false}, // Enable pushbullet
+  true,           // Enable OLED
   false,
   "pushbullet token", // PushBullet token
-  "openweathermap appid", // openweather key
-  "192.168.0.131", // szNotifIP
-  "/s?key=password&beep=1200,100", // szNotifPath
+  "openweathermap appid",  // openweathermap key
+  "192.168.31.158",          // szNotifIP
+  "/s?key=password&music=0", // szNotifPath play dingdong
   80, // NotifPort
-  {192,168,0,100}, 83, // host IP and port
+  {192,168,31,100}, 80, // host IP and port
   0,  // melody
+  0, // effect
+  {40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40}, // bright
   {0},
 };
 
