@@ -19,18 +19,15 @@
 extern SSD1306 display;
 #endif
 
-#ifdef LEDRING_ENABLE
-#include "LedRing.h"
-extern LedRing ring;
-#endif
-
 WiFiManager::WiFiManager()
 {
 }
 
-void WiFiManager::autoConnect(char const *apName, const char *pPass) {
-    _apName = apName;
-    _pPass = pPass;
+// Start WiFi connection or AP if no SSID
+void WiFiManager::autoConnect(char const *apName, const char *pPass)
+{
+  _apName = apName;
+  _pPass = pPass;
 
 //  DEBUG_PRINT("");
 //    DEBUG_PRINT("AutoConnect");
@@ -40,15 +37,21 @@ void WiFiManager::autoConnect(char const *apName, const char *pPass) {
 
     WiFi.mode(WIFI_STA);
     WiFi.begin(ee.szSSID, ee.szSSIDPassword);
-    if ( hasConnected() )
-    {
-      _bCfg = false;
-      return;
-    }
+    WiFi.setHostname(apName);
+    _state = ws_connecting;
   }
+  else
+  {
+    startAP();
+  }
+}
+
+// Start AP mode
+void WiFiManager::startAP()
+{
   //setup AP
   WiFi.mode(WIFI_AP);
-  WiFi.softAP(apName);
+  WiFi.softAP(_apName);
   DEBUG_PRINT("Started Soft Access Point");
 #ifdef OLED_ENABLE
   display.print("AP started:");
@@ -57,75 +60,105 @@ void WiFiManager::autoConnect(char const *apName, const char *pPass) {
 #endif
 
   DEBUG_PRINT(WiFi.softAPIP());
-  DEBUG_PRINT("Don't forget the port #");
 
-  if (!MDNS.begin(apName))
+  if (!MDNS.begin(_apName))
     DEBUG_PRINT("Error setting up MDNS responder!");
   WiFi.scanNetworks();
 
-  _timeout = true;
-  _bCfg = true;
+  _state = ws_config;
+  _timer = 50;
 }
 
-boolean WiFiManager::hasConnected(void)
+// return current connection sate
+int WiFiManager::state()
 {
-  int cnt = 16;
-  for(int c = 0; c < 500; c++)
+  return _state;
+}
+
+// returns true once after a connection is made (for time)
+bool WiFiManager::connectNew()
+{
+  if(_state == ws_connectSuccess)
   {
-    if(--cnt < 0)
-    {
-      cnt = 8;
-      if (WiFi.status() == WL_CONNECTED)
-      {
-        Serial.println("Connected");
-#ifdef LEDRING_ENABLE
-        ring.setIndicatorCount( 0 );
-#endif
-        return true;
-      }
-      Serial.print(".");
-#ifdef OLED_ENABLE
-      display.clear();
-      display.drawXbm(34,10, 60, 36, WiFi_Logo_bits);
-      display.setColor(INVERSE);
-      display.fillRect(10, 10, 108, 44);
-      display.setColor(WHITE);
-      drawSpinner(4, (c / 10) % 4);
-#endif
-    }
-    delay(20);
-#ifdef OLED_ENABLE
-    display.updateChunk();
-#endif
-#ifdef LEDRING_ENABLE
-//    ring.setIndicatorCount( c / 20);
-//    ring.service();
-#endif
+    _state = ws_connected;
+    return true;
   }
-  DEBUG_PRINT("");
-  DEBUG_PRINT("Could not connect to WiFi");
+  return false; 
+}
+
+// returns true if in config/AP mode
+bool WiFiManager::isCfg(void)
+{
+  return (_state == ws_config);
+}
+
+// checked by service. Times out after 10 seconds, and enters soft AP mode
+boolean WiFiManager::hasConnected()
+{
+  if(_timer == 0)
+    return false;
+
+  if(--_timer == 0)
+  {
+    DEBUG_PRINT("");
+    DEBUG_PRINT("Could not connect to WiFi");
 #ifdef OLED_ENABLE
-  display.print("No connection");
+    display.print("No connection");
+#endif
+    startAP();
+    return false;
+  }
+
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    Serial.println("Connected");
+    _state = ws_connectSuccess;
+    return true;
+  }
+  Serial.print(".");
+#ifdef OLED_ENABLE
+  display.clear();
+  display.drawXbm(34,10, 60, 36, WiFi_Logo_bits);
+  display.setColor(INVERSE);
+  display.fillRect(10, 10, 108, 44);
+  display.setColor(WHITE);
+  drawSpinner(4, (_timer / 10) % 4);
+  display.display();
 #endif
   return false;
 }
 
-bool WiFiManager::isCfg(void)
+void WiFiManager::setPass(const char *p)
 {
-  return _bCfg;
-}
-
-void WiFiManager::setPass(const char *p){
   strncpy(ee.szSSIDPassword, p, sizeof(ee.szSSIDPassword) );
   eemem.update();
   DEBUG_PRINT("Updated EEPROM.  Restaring.");
   autoConnect(_apName, _pPass);
 }
 
-void WiFiManager::seconds(void) {
+// Called at any frequency
+void WiFiManager::service()
+{
   static int s = 1; // do first list soon
+  static uint32_t m;
+  static uint16_t ticks;
 
-  if(_timeout == false)
+  if((millis() - m) > 200)
+  {
+    m = millis();
+    ticks++;
+    if(_state == ws_connecting)
+    {
+      hasConnected();
+      return;
+    }
+  }
+
+  if(ticks < 5)
+    return;
+  ticks = 0;
+
+  if(_state != ws_config)
     return;
   if(--s)
     return;
@@ -168,8 +201,6 @@ String WiFiManager::page()
   form.replace("$key", _pPass );
   s += form;
   s += HTTP_END;
-  
-  _timeout = false;
   return s;
 }
 
