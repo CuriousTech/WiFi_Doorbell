@@ -44,7 +44,6 @@ public:
     String page(void);
     bool isCfg(void);
     int state(void);
-    boolean hasConnected(void);
 
     //for convenience
     String urldecode(const char*);
