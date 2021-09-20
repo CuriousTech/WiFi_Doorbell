@@ -239,10 +239,8 @@ void parseParams(AsyncWebServerRequest *request)
     switch( idx )
     {
       case 0: // OLED
-#ifdef OLED_EBALE
         ee.bEnableOLED = bValue;
         if(bValue) bStartOLED = true;
-#endif
         break;
       case 1: // reset
         doorbellTimeIdx = 0;
@@ -446,10 +444,8 @@ void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
           ee.bMotion =iValue;
           break;
         case 5: // OLED
-#ifdef OLED_EBALE
           ee.bEnableOLED = iValue ? true:false;
           if(iValue) bStartOLED = true;
-#endif
           break;
         case 6: // loc
           strncpy(ee.location, psValue, sizeof(ee.location));
@@ -552,7 +548,6 @@ volatile bool bDoorBellTriggered;
 // called when doorbell rings (or test)
 void doorBell()
 {
-//  Serial.println("Doorbell");
   String s = "alert;Doorbell ";
   s += timeToTxt( doorbellTimes[doorbellTimeIdx] );
   ws.textAll(s);
@@ -568,7 +563,7 @@ void doorBell()
   doorbellTimes[doorbellTimeIdx] = newtime;
 
   sendState();
-  if(ee.szNotifIP[0])
+  if(ee.szNotifIP[0] && wifi.state() == ws_connected)
     jsNotif.begin(ee.szNotifIP, ee.szNotifPath, ee.NotifPort, false);
   // make sure it's more than 3 mins between triggers to send a PB
   if( newtime - dbTime > 3 * 60)
@@ -610,7 +605,7 @@ void motion()
   // make sure it's more than 3 mins between triggers to send a PB
   if( newtime - pirTime > 3 * 60)
   {
-    if(ee.bEnablePB[1])
+    if(ee.bEnablePB[1] && wifi.state() == ws_connected)
        pb.send("Doorbell", "Motion at " + timeToTxt(newtime), ee.pbToken );
   }
   pirTime = newtime; // latest trigger
@@ -660,9 +655,6 @@ void setup()
   server.on ( "/", HTTP_GET | HTTP_POST, [](AsyncWebServerRequest *request){ // main page (avoids call from root)
     if(wifi.isCfg())
       request->send( 200, "text/html", wifi.page() );
-//    else
-//      request->send( 301, "text/html", "Location: http://www.curioustech.net/" );
-    
     reportReq(request);
   });
 
@@ -677,7 +669,6 @@ void setup()
 
   server.onNotFound([](AsyncWebServerRequest *request){ // root and exploits will be called here with *no response* sent back
     //Handle Unknown Request
-//    request->send( 301, "text/html", "Location: http://www.curioustech.net/" );
     reportReq(request);  // Remove if you don't want all kinds of traffic from hacker attempts
 //    request->send(404);
   });
@@ -754,21 +745,19 @@ void loop()
   if(wifi.connectNew())
   {
     MDNS.begin( doorbell );
-    MDNS.addService("esp", "tcp", serverPort);
+    MDNS.addService("iot", "tcp", serverPort);
     utime.start();
   }
 
   if(bPirTriggered)
   {
     bPirTriggered = false;
-#ifdef OLED_ENABLE
     if(ee.bEnableOLED == false) // motion activated display on
     {
       displayOnTimer = 30;
       if(doorbellTimeIdx) // keep flashing bell for this time, and auto reset it in 30 secs
         bAutoClear = true;
     }
- #endif
     motion();
   }
 
@@ -818,7 +807,6 @@ void loop()
       }
     }
 
-#ifdef OLED_ENABLE
     if(displayOnTimer) // if alerts or messages, turn the display on
       if(--displayOnTimer == 0)
       {
@@ -831,7 +819,6 @@ void loop()
 #endif
         }
       }
-#endif
 
     if(nWrongPass)
       nWrongPass--;
@@ -839,14 +826,15 @@ void loop()
     draw();
   }
 
-  if(wifi.isCfg())
-    return;
-
-  mus.service();
-
 #ifdef LEDRING_H
   ring.service();
 #endif
+
+  mus.service();
+
+  if(wifi.isCfg())
+    return;
+
 #ifdef OLED_ENABLE
 #ifdef LEDRING_H
   display.updateChunk();
@@ -859,7 +847,8 @@ void loop()
 void draw()
 {
 #ifdef OLED_ENABLE
-
+  if(wifi.state() != ws_connected)
+    return;
 // screen draw from here on (fixed a stack trace dump)
   static int16_t ind;
   static bool blnk = false;
@@ -1050,6 +1039,8 @@ const char *jsonListClouds[] = { "clouds",
 // Call OpenWeathermap API
 void owCall()
 {
+  if(wifi.state() != ws_connected)
+    return;
   String path = "/data/2.5/weather?id=";
 
   path += ee.location;
