@@ -39,6 +39,7 @@ void WiFiManager::autoConnect(char const *apName, const char *pPass)
     WiFi.begin(ee.szSSID, ee.szSSIDPassword);
     WiFi.setHostname(apName);
     _state = ws_connecting;
+    _timer = 50;
   }
   else
   {
@@ -66,7 +67,6 @@ void WiFiManager::startAP()
   WiFi.scanNetworks();
 
   _state = ws_config;
-  _timer = 50;
 }
 
 // return current connection sate
@@ -92,42 +92,6 @@ bool WiFiManager::isCfg(void)
   return (_state == ws_config);
 }
 
-// checked by service. Times out after 10 seconds, and enters soft AP mode
-boolean WiFiManager::hasConnected()
-{
-  if(_timer == 0)
-    return false;
-
-  if(--_timer == 0)
-  {
-    DEBUG_PRINT("");
-    DEBUG_PRINT("Could not connect to WiFi");
-#ifdef OLED_ENABLE
-    display.print("No connection");
-#endif
-    startAP();
-    return false;
-  }
-
-  if (WiFi.status() == WL_CONNECTED)
-  {
-    Serial.println("Connected");
-    _state = ws_connectSuccess;
-    return true;
-  }
-  Serial.print(".");
-#ifdef OLED_ENABLE
-  display.clear();
-  display.drawXbm(34,10, 60, 36, WiFi_Logo_bits);
-  display.setColor(INVERSE);
-  display.fillRect(10, 10, 108, 44);
-  display.setColor(WHITE);
-  drawSpinner(4, (_timer / 10) % 4);
-  display.display();
-#endif
-  return false;
-}
-
 void WiFiManager::setPass(const char *p)
 {
   strncpy(ee.szSSIDPassword, p, sizeof(ee.szSSIDPassword) );
@@ -149,7 +113,32 @@ void WiFiManager::service()
     ticks++;
     if(_state == ws_connecting)
     {
-      hasConnected();
+#ifdef DEBUG
+      Serial.print(".");
+#endif
+#ifdef OLED_ENABLE
+      display.clear();
+      display.drawXbm(34,10, 60, 36, WiFi_Logo_bits);
+      display.setColor(INVERSE);
+      display.fillRect(10, 10, 108, 44);
+      display.setColor(WHITE);
+      drawSpinner(4, (_timer / 10) % 4);
+      display.display();
+#endif
+      if(_timer)
+      {
+        if (WiFi.status() == WL_CONNECTED)
+        {
+          DEBUG_PRINT("Connected");
+          _state = ws_connectSuccess;
+        }
+        else if(--_timer == 0)
+        {
+          DEBUG_PRINT("");
+          DEBUG_PRINT("Could not connect to WiFi");
+          startAP();
+        }
+      }
       return;
     }
   }
