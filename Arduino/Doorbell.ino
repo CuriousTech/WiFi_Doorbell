@@ -45,6 +45,7 @@ SOFTWARE.
 #include "PushBullet.h"
 #include "eeMem.h"
 #include "pages.h"
+
 #include "jsonstring.h"
 #include "Music.h"
 
@@ -160,7 +161,6 @@ void WsPrint(String s)
 {
     ws.textAll(s);
 }
-
 
 void parseParams(AsyncWebServerRequest *request)
 {
@@ -548,10 +548,14 @@ volatile bool bDoorBellTriggered;
 // called when doorbell rings (or test)
 void doorBell()
 {
-  String s = "alert;Doorbell ";
-  s += timeToTxt( doorbellTimes[doorbellTimeIdx] );
-  ws.textAll(s);
+  static bool bNotFirst;
 
+  if(bNotFirst == false) // skip powerup
+  {
+    bNotFirst = true;
+    return;
+  }
+  
   unsigned long newtime = now() - (3600 * (ee.tz + utime.getDST()));
 
   if( newtime - dbTime < 2) // ignore bounces and double taps (2 seconds)
@@ -561,6 +565,10 @@ void doorBell()
   }
 
   doorbellTimes[doorbellTimeIdx] = newtime;
+
+  String s = "alert;Doorbell ";
+  s += timeToTxt( doorbellTimes[doorbellTimeIdx] );
+  ws.textAll(s);
 
   sendState();
   if(ee.szNotifIP[0] && wifi.state() == ws_connected)
@@ -613,7 +621,15 @@ void motion()
 
 void ICACHE_RAM_ATTR doorbellISR()
 {
-  bDoorBellTriggered = true;
+  static uint32_t lastMS;
+  uint32_t ms = millis();
+
+  if(ms - lastMS > 20) // Filter the 60Hz if capacitor is too small
+  {
+    if(digitalRead(DOORBELL))
+      bDoorBellTriggered = true;
+  }
+  lastMS = ms;
 }
 
 volatile bool bPirTriggered = false;
@@ -716,6 +732,7 @@ void setup()
   jsonParse.addList(jsonListCmd);
 
 #ifdef OTA_ENABLE
+  ArduinoOTA.setHostname(doorbell);
   ArduinoOTA.begin();
 #endif
 
