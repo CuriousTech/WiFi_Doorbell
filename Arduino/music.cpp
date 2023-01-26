@@ -254,10 +254,10 @@ bool Music::play(int song)
     divider = pSong[thisNote + 1];
     if (divider > 0) {
       // regular note, just proceed
-      noteDuration = (wholenote) / divider;
+      noteDuration = wholenote / divider;
     } else if (divider < 0) {
       // dotted notes are represented with negative durations!!
-      noteDuration = (wholenote) / abs(divider);
+      noteDuration = wholenote / abs(divider);
       noteDuration *= 1.5; // increases the duration in half for dotted notes
     }
 
