@@ -9,7 +9,7 @@
 
 #include <Arduino.h>
 #include <ESPAsyncTCP.h> // https://github.com/me-no-dev/ESPAsyncTCP  Set ASYNC_TCP_SSL_ENABLED 1 in async_config.h
-                         // esp8266 must be >2.3.0
+
 class PushBullet
 {
 public:
