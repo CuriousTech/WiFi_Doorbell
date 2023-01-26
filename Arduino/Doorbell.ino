@@ -21,7 +21,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-// Build with Arduino IDE 1.8.9, esp8266 SDK 2.5.0
+// Build with Arduino IDE 1.8.19, esp8266 SDK 3.1.1
 
 #include "config.h"
 #include <TimeLib.h> // http://www.pjrc.com/teensy/td_libs_Time.html
@@ -33,7 +33,6 @@ SOFTWARE.
 
 #include <EEPROM.h>
 #include <ESP8266mDNS.h>
-#include "WiFiManager.h"
 #include <ESPAsyncWebServer.h> // https://github.com/me-no-dev/ESPAsyncWebServer
 #include <UdpTime.h> // https://github.com/CuriousTech/ESP07_WiFiGarageDoor/tree/master/libraries/UdpTime
 #ifdef OTA_ENABLE
@@ -107,13 +106,16 @@ int displayOnTimer;             // temporary OLED turn-on
 void convertIcon(uint8_t ni, bool bNight);
 #endif
 
-WiFiManager wifi;  // AP page:  192.168.4.1
 AsyncWebServer server( serverPort );
 AsyncWebSocket ws("/ws"); // access at ws://[esp ip]/ws
 
 PushBullet pb;
 
-eeMem eemem;
+eeMem ee;
+
+bool bConfigDone = false;
+bool bStarted = false;
+uint32_t connectTimer;
 
 void sendState(void);
 // WebSocket
@@ -164,7 +166,6 @@ void WsPrint(String s)
 
 void parseParams(AsyncWebServerRequest *request)
 {
-  char temp[100];
   char password[64] = "";
   int val;
   bool bRemote = false;
@@ -177,8 +178,7 @@ void parseParams(AsyncWebServerRequest *request)
   for ( uint8_t i = 0; i < request->params(); i++ ) {
     AsyncWebParameter* p = request->getParam(i);
 
-    p->value().toCharArray(temp, 100);
-    String s = wifi.urldecode(temp);
+    String s = request->urlDecode(p->value());
 
     switch( p->name().charAt(0)  )
     {
@@ -214,20 +214,17 @@ void parseParams(AsyncWebServerRequest *request)
     "loc",
     "owkey",
     "pbtoken",
-    "ssid",
-    "pass",
     "notifip",
-    "notifpath", // 10
+    "notifpath",
     "notifport",
-    "play",
+    "play", // 10
     "light",
     "lighttime",
   };
 
   for ( uint8_t i = 0; i < request->params(); i++ ) {
     AsyncWebParameter* p = request->getParam(i);
-    p->value().toCharArray(temp, 100);
-    String s = wifi.urldecode(temp);
+    String s = request->urlDecode(p->value());
     bool bValue = (s == "true" || s == "1") ? true:false;
 //    Serial.println( i + " " + server.argName ( i ) + ": " + s);
 
@@ -257,30 +254,24 @@ void parseParams(AsyncWebServerRequest *request)
       case 4: // pushbullet token
         s.toCharArray(ee.pbToken, sizeof(ee.pbToken));
         break;
-      case 5: // ssid
-        s.toCharArray(ee.szSSID, sizeof(ee.szSSID));
-        break;
-      case 6: // pass
-        wifi.setPass(s.c_str());
-        break;
-      case 7: // notifip   /s?key=password&notifip="192.168.0.102"&notifpath="/test"&notifport=82
+      case 5: // notifip   /s?key=password&notifip="192.168.0.102"&notifpath="/test"&notifport=82
          strncpy(ee.szNotifIP, s.c_str(), sizeof(ee.szNotifIP));
          break;
-      case 8: // path
+      case 6: // path
          strncpy(ee.szNotifPath, s.c_str(), sizeof(ee.szNotifPath));
          break;
-      case 9: // notifport
+      case 7: // notifport
          ee.NotifPort = atoi(s.c_str());
          break;
-      case 10: // play
+      case 8: // play
          mus.play(s.toInt());
          break;
-      case 11: // light
+      case 9: // light
 #ifdef LEDRING_H
          ring.light(s.toInt());
 #endif
         break;
-      case 12: // lighttime
+      case 10: // lighttime
 #ifdef LEDRING_H
          ring.lightTimer(s.toInt());
 #endif
@@ -332,20 +323,13 @@ void reportReq(AsyncWebServerRequest *request) // report full request to PC
 {
   jsonString js("remote");
   js.Var("remote", request->client()->remoteIP().toString() );
-  String sm;
-  switch(request->method())
+  js.Var("method", request->methodToString());
+  String s = request->host();
+  if(s == "")
   {
-    case HTTP_GET: sm = "GET"; break;
-    case HTTP_POST: sm = "POST"; break;
-    case HTTP_DELETE: sm = "DELETE"; break;
-    case HTTP_PUT: sm = "PUT"; break;
-    case HTTP_PATCH: sm = "PATCH"; break;
-    case HTTP_HEAD: sm = "HEAD"; break;
-    case HTTP_OPTIONS: sm = "OPTIONS"; break;
-    default: sm = "<unknown>"; break;
+    s = request->client()->localIP().toString();
   }
-  js.Var("method", sm);
-  js.Var("host", request->host() );
+  js.Var("host", s );
   js.Var("url", request->url() );
 
   if(request->contentLength()){
@@ -571,7 +555,7 @@ void doorBell()
   ws.textAll(s);
 
   sendState();
-  if(ee.szNotifIP[0] && wifi.state() == ws_connected)
+  if(ee.szNotifIP[0] && WiFi.status() == WL_CONNECTED)
     jsNotif.begin(ee.szNotifIP, ee.szNotifPath, ee.NotifPort, false);
   // make sure it's more than 3 mins between triggers to send a PB
   if( newtime - dbTime > 3 * 60)
@@ -613,7 +597,7 @@ void motion()
   // make sure it's more than 3 mins between triggers to send a PB
   if( newtime - pirTime > 3 * 60)
   {
-    if(ee.bEnablePB[1] && wifi.state() == ws_connected)
+    if(ee.bEnablePB[1] && WiFi.status() == WL_CONNECTED)
        pb.send("Doorbell", "Motion at " + timeToTxt(newtime), ee.pbToken );
   }
   pirTime = newtime; // latest trigger
@@ -656,7 +640,20 @@ void setup()
 #endif
 
   WiFi.hostname(doorbell);
-  wifi.autoConnect(doorbell, controlPassword);
+  WiFi.mode(WIFI_STA);
+
+  if ( ee.szSSID[0] )
+  {
+    WiFi.begin(ee.szSSID, ee.szSSIDPassword);
+    WiFi.setHostname(doorbell);
+    bConfigDone = true;
+  }
+  else
+  {
+    Serial.println("No SSID. Waiting for EspTouch.");
+    WiFi.beginSmartConfig();
+  }
+  connectTimer = now();
 
 #ifdef LEDRING_H
   ring.init();
@@ -669,8 +666,6 @@ void setup()
   server.addHandler(&ws);
 
   server.on ( "/", HTTP_GET | HTTP_POST, [](AsyncWebServerRequest *request){ // main page (avoids call from root)
-    if(wifi.isCfg())
-      request->send( 200, "text/html", wifi.page() );
     reportReq(request);
   });
 
@@ -752,18 +747,10 @@ void loop()
   ArduinoOTA.handle();
 #endif
 
-  wifi.service();
-  if(!wifi.isCfg())
+  if(WiFi.status() == WL_CONNECTED)
   {
     if(utime.check(ee.tz))
       ring.setEffect(ee.effect);
-  }
-
-  if(wifi.connectNew())
-  {
-    MDNS.begin( doorbell );
-    MDNS.addService("iot", "tcp", serverPort);
-    utime.start();
   }
 
   if(bPirTriggered)
@@ -788,6 +775,43 @@ void loop()
   {
     sec_save = second();
 
+    if(!bConfigDone)
+    {
+      if( WiFi.smartConfigDone())
+      {
+        Serial.println("SmartConfig set");
+        bConfigDone = true;
+        connectTimer = now();
+      }
+    }
+    if(bConfigDone)
+    {
+      if(WiFi.status() == WL_CONNECTED)
+      {
+        if(!bStarted)
+        {
+          Serial.println("WiFi Connected");
+          MDNS.begin( doorbell );
+          bStarted = true;
+          MDNS.addService("iot", "tcp", serverPort);
+          WiFi.SSID().toCharArray(ee.szSSID, sizeof(ee.szSSID)); // Get the SSID from SmartConfig or last used
+          WiFi.psk().toCharArray(ee.szSSIDPassword, sizeof(ee.szSSIDPassword) );
+
+          utime.start();
+        }
+      }
+      else if(now() - connectTimer > 10) // failed to connect for some reason
+      {
+        Serial.println("Connect failed. Starting SmartConfig");
+        connectTimer = now();
+        ee.szSSID[0] = 0;
+        WiFi.mode(WIFI_AP_STA);
+        WiFi.beginSmartConfig();
+        bConfigDone = false;
+        bStarted = false;
+      }
+    }
+
     if(--ssCnt == 0) // heartbeat I guess
     {
       sendState();
@@ -799,9 +823,9 @@ void loop()
 
       if (hour_save != hour())  // update our time daily (at 2AM for DST)
       {
-        if( (hour_save = hour()) == 2 && !wifi.isCfg())
+        if( (hour_save = hour()) == 2 && WiFi.status() == WL_CONNECTED)
           utime.start();
-        eemem.update(); // update EEPROM if needed while we're at it (give user time to make many adjustments)
+        ee.update(); // update EEPROM if needed while we're at it (give user time to make many adjustments)
       }
       if (min_save == 0) // hourly stuff
       {
@@ -819,7 +843,7 @@ void loop()
       static uint8_t owCnt = 1;
       if(--owCnt == 0)
       {
-        owCnt = 5; // every 5 mins
+        owCnt = 10; // every 10 mins
         owCall();
       }
     }
@@ -849,7 +873,7 @@ void loop()
 
   mus.service();
 
-  if(wifi.isCfg())
+  if(WiFi.status() != WL_CONNECTED)
     return;
 
 #ifdef OLED_ENABLE
@@ -864,9 +888,9 @@ void loop()
 void draw()
 {
 #ifdef OLED_ENABLE
-  if(wifi.state() != ws_connected)
+  if(WiFi.status() != WL_CONNECTED)
     return;
-// screen draw from here on (fixed a stack trace dump)
+
   static int16_t ind;
   static bool blnk = false;
   static long last_blnk;
@@ -982,22 +1006,22 @@ void owCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
       memset(nWeatherID, 0, sizeof(nWeatherID));
       memset(szWeather, 0, sizeof(szWeather));
       memset(szWeatherDesc, 0, sizeof(szWeatherDesc));
-      innerParse.process("weather", psValue);
+      innerParse.process((char *)"weather", psValue);
       break;
     case 1: // main
-      innerParse.process("main", psValue);
+      innerParse.process((char *)"main", psValue);
       break;
     case 2: // wind
-      innerParse.process("wind", psValue);
+      innerParse.process((char *)"wind", psValue);
       break;
     case 3: // rain
-      innerParse.process("rain", psValue);
+      innerParse.process((char *)"rain", psValue);
       break;
     case 4: // snow
-      innerParse.process("snow", psValue);
+      innerParse.process((char *)"snow", psValue);
       break;
     case 5: // clouds
-      innerParse.process("clouds", psValue);
+      innerParse.process((char *)"clouds", psValue);
       break;
     case 6: // dt
 //      ws.textAll(String("print;dt ") + psValue);
@@ -1056,7 +1080,7 @@ const char *jsonListClouds[] = { "clouds",
 // Call OpenWeathermap API
 void owCall()
 {
-  if(wifi.state() != ws_connected)
+  if(WiFi.status() != WL_CONNECTED)
     return;
   String path = "/data/2.5/weather?id=";
 
@@ -1190,7 +1214,7 @@ const cond2icon cdata[] = { // row column from image at http://www.alessioatzeni
   {11, icon33, icon76}, // thunderstorm
   {13, icon43, icon71}, // snow
   {50, icon24, icon31}, // mist
-  {NULL, NULL}
+  { 0, NULL, NULL}
 };
 
 void convertIcon(uint8_t ni, bool bNight)
