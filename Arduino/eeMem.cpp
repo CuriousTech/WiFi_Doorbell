@@ -3,62 +3,39 @@
 #include "eeMem.h"
 #include <EEPROM.h>
 
-eeSet ee = { sizeof(eeSet), 0xAAAA,
-  "",  // saved SSID (set these to bypass the SoftAP config)
-  "", // router password
-  -5,             // TZ
-  "4291945",      // "location ID"
-  {false, false}, // Enable pushbullet
-  true,           // Enable OLED
-  false,
-  "pushbullet token", // PushBullet token
-  "openweathermap appid",  // openweathermap key
-  "192.168.31.158",          // szNotifIP
-  "/s?key=password&music=0", // szNotifPath play dingdong
-  80, // NotifPort
-  {192,168,31,100}, 80, // host IP and port
-  0,  // melody
-  0, // effect
-  {40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40}, // bright
-  {0},
-};
-
 eeMem::eeMem()
 {
-  EEPROM.begin(512);
-  delay(10);
+  EEPROM.begin(EESIZE);
 
-  uint8_t data[sizeof(eeSet)];
-  eeSet *pEE = (eeSet *)data;
+  uint8_t data[EESIZE];
+  uint16_t *pwTemp = (uint16_t *)data;
 
   int addr = 0;
-  for(int i = 0; i < sizeof(eeSet); i++, addr++)
+  for(int i = 0; i < EESIZE; i++, addr++)
   {
     data[i] = EEPROM.read( addr );
   }
 
-  if(pEE->size != sizeof(eeSet)) return; // revert to defaults if struct size changes
-  uint16_t sum = pEE->sum;
-  pEE->sum = 0;
-  pEE->sum = Fletcher16(data, sizeof(eeSet) );
-  if(pEE->sum != sum) return; // revert to defaults if sum fails
-  memcpy(&ee, data, sizeof(eeSet) );
+  if(pwTemp[0] != EESIZE) return; // revert to defaults if struct size changes
+  uint16_t sum = pwTemp[1];
+  pwTemp[1] = 0;
+  pwTemp[1] = Fletcher16(data, EESIZE );
+  if(pwTemp[1] != sum) return; // revert to defaults if sum fails
+  memcpy(this + offsetof(eeMem, size), data, EESIZE );
 }
 
 void eeMem::update() // write the settings if changed
 {
   uint16_t old_sum = ee.sum;
   ee.sum = 0;
-  ee.sum = Fletcher16((uint8_t*)&ee, sizeof(eeSet));
+  ee.sum = Fletcher16((uint8_t*)this + offsetof(eeMem, size), EESIZE);
 
   if(old_sum == ee.sum)
-  {
     return; // Nothing has changed?
-  }
 
   uint16_t addr = 0;
-  uint8_t *pData = (uint8_t *)&ee;
-  for(int i = 0; i < sizeof(eeSet); i++, addr++)
+  uint8_t *pData = (uint8_t *)this + offsetof(eeMem, size);
+  for(int i = 0; i < EESIZE; i++, addr++)
   {
     EEPROM.write(addr, pData[i] );
   }
