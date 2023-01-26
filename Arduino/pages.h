@@ -75,8 +75,10 @@ ws.onmessage = function(evt) {
   oledon=d.o
   pb0=d.pbdb
   pb1=d.pbm
-  dt=new Date(d.pir*1000)
-  a.mot.innerHTML=dt.toString().split(' ')[0]+' '+dt.toLocaleTimeString()
+  if(d.pir){
+   dt=new Date(d.pir*1000)
+   a.mot.innerHTML=dt.toString().split(' ')[0]+' '+dt.toLocaleTimeString()
+  }
   a.loc.value=d.loc
   a.OLED.value=oledon?'ON ':'OFF'
   a.MOT.value=bmot?'ON ':'OFF'
