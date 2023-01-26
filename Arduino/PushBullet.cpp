@@ -6,6 +6,7 @@
 */
 
 #include "PushBullet.h"
+#include "jsonstring.h"
 
 const char host[] = "api.pushbullet.com";
 const char url[] = "/v2/pushes";
@@ -24,19 +25,17 @@ PushBullet::PushBullet()
 
 bool PushBullet::send(const char *pTitle, String sBody, const char *pToken)
 {
+//  Serial.println("PB send");
   strncpy(m_szTitle, pTitle, sizeof(m_szTitle) );
   sBody.toCharArray(m_szBody, sizeof(m_szBody) );
   strncpy(m_szToken, pToken, sizeof(m_szToken) );
-
-  if(m_ac.connected())
-    m_ac.stop();
-
-  return m_ac.connect( host, 443, true);
+  return m_ac.connect( host, 443);//, true);
 }
   
 void PushBullet::_onDisconnect(AsyncClient* client)
 {
   (void)client;
+//  Serial.println("PB onDis");
 }
 
 void PushBullet::_onTimeout(AsyncClient* client, uint32_t time)
@@ -48,19 +47,19 @@ void PushBullet::_onError(AsyncClient* client, int8_t error)
 {
   (void)client;
 
-  Serial.print("PB error ");
-  Serial.println(error);
+//  Serial.print("PB error ");
+//  Serial.println(error);
 }
 
 void PushBullet::_onConnect(AsyncClient* client)
 {
   (void)client;
 
-  String data = "{\"type\": \"note\", \"title\": \"";
-  data += m_szTitle;
-  data += "\", \"body\": \"";
-  data += m_szBody;
-  data += "\"}";
+  jsonString js;
+  js.Var("type", "note");
+  js.Var("title", m_szTitle);
+  js.Var("body", m_szBody);
+  String data = js.Close();
 
   String s = String("POST ");
   s += url;
@@ -81,6 +80,7 @@ void PushBullet::_onConnect(AsyncClient* client)
   s += "\r\n\r\n";
 
   m_ac.add(s.c_str(), s.length());
+  s = String();
 }
 
 void PushBullet::_onData(AsyncClient* client, char* data, size_t len)
