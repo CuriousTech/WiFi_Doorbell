@@ -17,7 +17,7 @@ public:
     return s;
   }
 
-  void Var(char *key, int iVal)
+  void Var(const char *key, int iVal)
   {
     if(m_cnt) s += ",";
     s += "\"";
@@ -27,7 +27,7 @@ public:
     m_cnt++;
   }
 
-  void Var(char *key, uint32_t iVal)
+  void Var(const char *key, uint32_t iVal)
   {
     if(m_cnt) s += ",";
     s += "\"";
@@ -37,7 +37,7 @@ public:
     m_cnt++;
   }
 
-  void Var(char *key, long int iVal)
+  void Var(const char *key, long int iVal)
   {
     if(m_cnt) s += ",";
     s += "\"";
@@ -47,7 +47,7 @@ public:
     m_cnt++;
   }
 
-  void Var(char *key, float fVal)
+  void Var(const char *key, float fVal)
   {
     if(m_cnt) s += ",";
     s += "\"";
@@ -57,7 +57,7 @@ public:
     m_cnt++;
   }
   
-  void Var(char *key, bool bVal)
+  void Var(const char *key, bool bVal)
   {
     if(m_cnt) s += ",";
     s += "\"";
@@ -67,7 +67,7 @@ public:
     m_cnt++;
   }
   
-  void Var(char *key, char *sVal)
+  void Var(const char *key, const char *sVal)
   {
     if(m_cnt) s += ",";
     s += "\"";
@@ -78,7 +78,7 @@ public:
     m_cnt++;
   }
   
-  void Var(char *key, String sVal)
+  void Var(const char *key, String sVal)
   {
     if(m_cnt) s += ",";
     s += "\"";
@@ -89,7 +89,7 @@ public:
     m_cnt++;
   }
 
-  void Array(char *key, uint32_t iVal[], int n)
+  void Array(const char *key, uint32_t iVal[], int n)
   {
     if(m_cnt) s += ",";
     s += "\"";
@@ -104,7 +104,7 @@ public:
     m_cnt++;
   }
 
-  void ArrayHdrs(char *key, AsyncWebServerRequest *request)
+  void ArrayHdrs(const char *key, AsyncWebServerRequest *request)
   {
     int nHeaders = request->headers();
     if(nHeaders == 0) return;
@@ -126,7 +126,7 @@ public:
     m_cnt++;
   }
 
-  void ArrayPrms(char *key, AsyncWebServerRequest *request)
+  void ArrayPrms(const char *key, AsyncWebServerRequest *request)
   {
     int nParams = request->params();
     if(!nParams) return;
