@@ -119,20 +119,20 @@ uint32_t connectTimer;
 
 void sendState(void);
 // WebSocket
-void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
+void jsonCallback(int16_t iName, int iValue, char *psValue);
 JsonClient jsonParse(jsonCallback);
 JsonClient jsNotif(jsonCallback); // notifier (push to another device)
 
 // OpenWeatherMap api
-void owCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
+void owCallback(int16_t iName, int iValue, char *psValue);
 JsonClient owClient(owCallback, 2200);
-void innerCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
+void innerCallback(int16_t iName, int iValue, char *psValue);
 JsonClient innerParse(innerCallback, 1200);
 void owCall(void);
 
 String dataJson() // timed/instant pushed data
 {
-  jsonString js;
+  jsonString js("state");
   js.Var("t", (uint32_t)( now() - ((ee.tz + utime.getDST()) * 3600) ) );
   js.Var("tz", ee.tz);
   js.Var("weather", szWeather[0] );
@@ -157,11 +157,6 @@ String dataJson() // timed/instant pushed data
 //    if(i) s += ",";
 //    s += szWeather[i];
 //  }
-}
-
-void WsPrint(String s)
-{
-    ws.textAll(s);
 }
 
 void parseParams(AsyncWebServerRequest *request)
@@ -373,7 +368,7 @@ void handleJson(AsyncWebServerRequest *request)
   request->send( 200, "text/json", js.Close() );
 }
 
-const char *jsonListCmd[] = { "cmd", // WebSocket command list
+const char *jsonListCmd[] = { // WebSocket command list
   "key",
   "reset",
   "pbdb", // pushbullet doorbell option
@@ -394,84 +389,79 @@ const char *jsonListCmd[] = { "cmd", // WebSocket command list
 
 bool bKeyGood;
 
-void jsonCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
+void jsonCallback(int16_t iName, int iValue, char *psValue)
 {
   if(iName && !bKeyGood)
     return;
-  switch(iEvent)
+  switch(iName)
   {
-    case 0: // cmd
-      switch(iName)
+    case 0: // key
+      if(!strcmp(psValue, controlPassword)) // first item must be key
+        bKeyGood = true;
+      break;
+    case 1: // reset
+      if(doorbellTimeIdx)
       {
-        case 0: // key
-          if(!strcmp(psValue, controlPassword)) // first item must be key
-            bKeyGood = true;
-          break;
-        case 1: // reset
-          if(doorbellTimeIdx)
-          {
-            doorbellTimeIdx = 0;
-            memset(doorbellTimes, 0, sizeof(doorbellTimes));
-            sendState();
+        doorbellTimeIdx = 0;
+        memset(doorbellTimes, 0, sizeof(doorbellTimes));
+        sendState();
 #ifdef LEDRING_H
-            ring.setIndicatorCount(doorbellTimeIdx);
+        ring.setIndicatorCount(doorbellTimeIdx);
 #endif
-          }
-          break;
-        case 2: // pbdb
-          ee.bEnablePB[0] = iValue;
-          break;
-        case 3: // pbm
-          ee.bEnablePB[1] = iValue;
-          break;
-        case 4: // motion
-          ee.bMotion =iValue;
-          break;
-        case 5: // OLED
-          ee.bEnableOLED = iValue ? true:false;
-          if(iValue) bStartOLED = true;
-          break;
-        case 6: // loc
-          strncpy(ee.location, psValue, sizeof(ee.location));
-          break;
-        case 7: // TZ
-          ee.tz = iValue;
-          utime.start();
-          break;
-        case 8: // effect
-#ifdef LEDRING_H
-          ring.setEffect(iValue);
-          ee.effect = iValue;
-#endif
-          break;
-        case 9: // music
-          ee.melody = iValue;
-          mus.play(iValue);
-          break;
-        case 10: // indicator count
-#ifdef LEDRING_H
-          ring.setIndicatorCount(iValue);
-#endif
-          break;
-        case 11: // melody
-          ee.melody = iValue;
-          break;
-        case 12: // brightnes
-#ifdef LEDRING_H
-          ring.setBrightness(iValue);
-#endif
-          break;
-        case 13: // light
-#ifdef LEDRING_H
-          ring.light(iValue);
-#endif
-          break;
-        case 14: // lighttime
-#ifdef LEDRING_H
-          ring.lightTimer(iValue);
-#endif
-          break;
       }
+      break;
+    case 2: // pbdb
+      ee.bEnablePB[0] = iValue;
+      break;
+    case 3: // pbm
+      ee.bEnablePB[1] = iValue;
+      break;
+    case 4: // motion
+      ee.bMotion =iValue;
+      break;
+    case 5: // OLED
+      ee.bEnableOLED = iValue ? true:false;
+      if(iValue) bStartOLED = true;
+      break;
+    case 6: // loc
+      strncpy(ee.location, psValue, sizeof(ee.location));
+      break;
+    case 7: // TZ
+      ee.tz = iValue;
+      utime.start();
+      break;
+    case 8: // effect
+#ifdef LEDRING_H
+      ring.setEffect(iValue);
+      ee.effect = iValue;
+#endif
+      break;
+    case 9: // music
+      ee.melody = iValue;
+      mus.play(iValue);
+      break;
+    case 10: // indicator count
+#ifdef LEDRING_H
+      ring.setIndicatorCount(iValue);
+#endif
+      break;
+    case 11: // melody
+      ee.melody = iValue;
+      break;
+    case 12: // brightnes
+#ifdef LEDRING_H
+      ring.setBrightness(iValue);
+#endif
+      break;
+    case 13: // light
+#ifdef LEDRING_H
+      ring.light(iValue);
+#endif
+      break;
+    case 14: // lighttime
+#ifdef LEDRING_H
+      ring.lightTimer(iValue);
+#endif
       break;
   }
 }
@@ -486,11 +476,10 @@ void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventT
     case WS_EVT_CONNECT:      //client connected
       if(bReset)
       {
-        client->text("alert;Restarted");
+        client->text( "{\"cmd\":\"alert\",\"text\":\"Restarted\"}" );
         bReset = false;
       }
-      s = String("state;") + dataJson().c_str();
-      client->text(s);
+      client->text(dataJson());
       client->ping();
       break;
     case WS_EVT_DISCONNECT:    //client disconnected
@@ -506,12 +495,8 @@ void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventT
         if(info->opcode == WS_TEXT){
           data[len] = 0;
 
-          char *pCmd = strtok((char *)data, ";"); // assume format is "name;{json:x}"
-          char *pData = strtok(NULL, "");
-
-          if(pCmd == NULL || pData == NULL) break;
           bKeyGood = false; // for callback (all commands need a key)
-          jsonParse.process(pCmd, pData);
+          jsonParse.process((char*)data);
         }
       }
       break;
@@ -521,8 +506,7 @@ void onWsEvent(AsyncWebSocket * server, AsyncWebSocketClient * client, AwsEventT
 static int ssCnt = 30;
 void sendState()
 {
-  String s = dataJson();
-  ws.textAll(String("state;") + s);
+  ws.textAll(dataJson());
   ssCnt = 59 - second();
   if(ssCnt < 20) ssCnt = 59;
 }
@@ -693,7 +677,7 @@ void setup()
       for (int i = 0; i < n; ++i){
         if(i) json += ",";
         jsonString js;
-        
+
         js.Var("rssi", String(WiFi.RSSI(i)) );
         js.Var("ssid", WiFi.SSID(i) );
         js.Var("bssid", WiFi.BSSIDstr(i) );
@@ -724,7 +708,7 @@ void setup()
   });
 
   server.begin();
-  jsonParse.addList(jsonListCmd);
+  jsonParse.setList(jsonListCmd);
 
 #ifdef OTA_ENABLE
   ArduinoOTA.setHostname(doorbell);
@@ -974,7 +958,7 @@ void draw()
 
 ///////////////
 // things we want from conditions request
-const char *jsonListOw[] = { "",
+const char *jsonListOw[] = {
   "weather",   // 0
   "main",      // 
   "wind",      //
@@ -989,65 +973,14 @@ const char *jsonListOw[] = { "",
   NULL
 };
 
-uint8_t nWeatherIdx;
-
-void owCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
-{
-  if(iEvent == -1) // connection events
-    return;
-
-  switch(iName)
-  {
-    case 0: // weather [{},{},{}] array
-      nWeatherIdx = 0;
-#ifdef OLED_EBALE
-      memset(pIcon, 0, sizeof(pIcon));
-#endif
-      memset(nWeatherID, 0, sizeof(nWeatherID));
-      memset(szWeather, 0, sizeof(szWeather));
-      memset(szWeatherDesc, 0, sizeof(szWeatherDesc));
-      innerParse.process((char *)"weather", psValue);
-      break;
-    case 1: // main
-      innerParse.process((char *)"main", psValue);
-      break;
-    case 2: // wind
-      innerParse.process((char *)"wind", psValue);
-      break;
-    case 3: // rain
-      innerParse.process((char *)"rain", psValue);
-      break;
-    case 4: // snow
-      innerParse.process((char *)"snow", psValue);
-      break;
-    case 5: // clouds
-      innerParse.process((char *)"clouds", psValue);
-      break;
-    case 6: // dt
-//      ws.textAll(String("print;dt ") + psValue);
-      break;
-    case 7: // sys {"type":1,"id":1128,"message":0.0033,"country":"US","sunrise":1542284504,"sunset":1542320651}
-//      ws.textAll(String("print;sys ") + psValue);
-      break;
-    case 8: // id
-      break;
-    case 9: // name
-      strncpy(szWeatherLoc, psValue, strlen(szWeatherLoc));
-      break;
-    case 10: // cod
-      if(iValue != 200)
-        ws.textAll(String("print;errcode ") + iValue);
-      break;
-  }
-}
-
-const char *jsonListWeather[] = { "weather",
+const char *jsonListWeather[] = {
   "id",      // 0
   "main",
   "description",
   "icon",
   NULL
 };
+
 const char *jsonListMain[] = { "main",
   "temp",      // 0
   "pressure",
@@ -1077,6 +1010,67 @@ const char *jsonListClouds[] = { "clouds",
   NULL
 };
 
+uint8_t nWeatherIdx;
+uint8_t nParseIdx;
+void owCallback(int16_t iName, int iValue, char *psValue)
+{
+  switch(iName)
+  {
+    case 0: // weather [{},{},{}] array
+      nWeatherIdx = 0;
+#ifdef OLED_EBALE
+      memset(pIcon, 0, sizeof(pIcon));
+#endif
+      memset(nWeatherID, 0, sizeof(nWeatherID));
+      memset(szWeather, 0, sizeof(szWeather));
+      memset(szWeatherDesc, 0, sizeof(szWeatherDesc));
+      innerParse.setList(jsonListWeather);
+      nParseIdx = 0;
+      innerParse.process(psValue);
+      break;
+    case 1: // main
+      innerParse.setList(jsonListMain);
+      nParseIdx = 1;
+      innerParse.process(psValue);
+      break;
+    case 2: // wind
+      innerParse.setList(jsonListWind);
+      nParseIdx = 2;
+      innerParse.process(psValue);
+      break;
+    case 3: // rain
+      innerParse.setList(jsonListRain);
+      nParseIdx = 3;
+      innerParse.process(psValue);
+      break;
+    case 4: // snow
+      innerParse.setList(jsonListSnow);
+      nParseIdx = 4;
+      innerParse.process(psValue);
+      break;
+    case 5: // clouds
+      innerParse.setList(jsonListClouds);
+      nParseIdx = 5;
+      innerParse.process(psValue);
+      break;
+    case 6: // dt
+//      ws.textAll(String("{\"cmd\":\"print\",\"dt\":") + psValue + "\"");
+      break;
+    case 7: // sys {"type":1,"id":1128,"message":0.0033,"country":"US","sunrise":1542284504,"sunset":1542320651}
+//      ws.textAll(String("{\"cmd\":\"print\",\"sys\":\"") + psValue + "\"");
+      break;
+    case 8: // id
+      break;
+    case 9: // name
+      strncpy(szWeatherLoc, psValue, strlen(szWeatherLoc));
+      break;
+    case 10: // cod
+      if(iValue != 200)
+        ws.textAll(String("{\"cmd\":\"print\",\"errcode\":\"") + iValue + "\"");
+      break;
+  }
+}
+
 // Call OpenWeathermap API
 void owCall()
 {
@@ -1090,27 +1084,14 @@ void owCall()
   path += "&units=imperial";
 
   owClient.begin("api.openweathermap.org", path.c_str(), 80, false);
-  owClient.addList(jsonListOw);
-  static bool bAdded;
-  if(!bAdded){
-    innerParse.addList(jsonListWeather);
-    innerParse.addList(jsonListMain);
-    innerParse.addList(jsonListWind);
-    innerParse.addList(jsonListRain);
-    innerParse.addList(jsonListSnow);
-    innerParse.addList(jsonListClouds);
-    bAdded = true;
-  }
+  owClient.setList(jsonListOw);
 }
 
-void innerCallback(int16_t iEvent, uint16_t iName, int iValue, char *psValue)
+void innerCallback(int16_t iName, int iValue, char *psValue)
 {
-  if(iEvent == -1) // connection events
-    return;
-
   String s;
 
-  switch(iEvent)
+  switch(nParseIdx)
   {
     case 0:// weather
       switch(iName)
