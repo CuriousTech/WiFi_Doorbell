@@ -17,6 +17,7 @@
 enum JC_Status
 {
     JC_IDLE,
+    JC_CONNECTING,
     JC_CONNECTED,
     JC_DONE,
     JC_TIMEOUT,
@@ -26,24 +27,26 @@ enum JC_Status
 };
 
 #define RETRIES 6
+#define TIMEOUT 30 // Allow maximum 30s between data packets.
 
 class JsonClient
 {
 public:
-  JsonClient(void (*callback)(int16_t iEvent, uint16_t iName, int iValue, char *psValue), uint16_t nSize = 1024);
-  bool  addList(const char **pList);
-  bool  begin(const char *pHost, const char *pPath, uint16_t port, bool bKeepAlive, bool bPost = false, const char **pHeaders = NULL, char *pData = NULL);
-  bool  service(void);
+  JsonClient(void (*callback)(int16_t iName, int iValue, char *psValue), uint16_t nSize = 1024);
+  bool  setList(const char **pList);
+  bool  begin(const char *pHost, const char *pPath, uint16_t port, bool bKeepAlive = false, bool bPost = false, const char **pHeaders = NULL, char *pData = NULL, uint16_t to = TIMEOUT);
+  bool  begin(IPAddress ip, const char *pPath, uint16_t port, bool bKeepAlive = false, bool bPost = false, const char **pHeaders = NULL, char *pData = NULL, uint16_t to = TIMEOUT);
   void  end(void);
-  void  process(char *event, char *data);
+  void  process(char *data);
   int   status(void);
 
 private:
+  bool  begin(const char *pPath, uint16_t port, bool bKeepAlive = false, bool bPost = false, const char **pHeaders = NULL, char *pData = NULL, uint16_t to = TIMEOUT);
   bool  connect(void);
   void  processLine(void);
-  void  sendHeader(const char *pHeaderName, const char *pHeaderValue);
-  void  sendHeader(const char *pHeaderName, int nHeaderValue);
-  void  (*m_callback)(int16_t iEvent, uint16_t iName, int iValue, char *psValue);
+  void  sendHeader(const char *pHeaderName, const char *pHeaderValue, AsyncClient* client);
+  void  sendHeader(const char *pHeaderName, int nHeaderValue, AsyncClient* client);
+  void  (*m_callback)(int16_t iName, int iValue, char *psValue);
   char *skipwhite(char *p);
 
   AsyncClient m_ac;
@@ -52,24 +55,25 @@ private:
   static void _onError(AsyncClient* client, int8_t error);
   void _onTimeout(AsyncClient* client, uint32_t time);
   void _onData(AsyncClient* client, char* data, size_t len);
-  char m_szHost[64];
+  uint32_t m_timer;
+  uint32_t m_to;
+  IPAddress m_ip;
+  char *m_pszHost;
   char m_szPath[128];
   char m_szData[256];
 #define LIST_CNT 8
-  const char **m_jsonList[LIST_CNT];
+  const char **m_jsonList;
   const char **m_pHeaders;
   uint16_t m_bufcnt;
-  uint16_t m_event;
   uint16_t m_nPort;
   uint16_t m_nBufSize;
   char     *m_pBuffer;
-  unsigned long m_timeOut;
+  uint8_t m_acIdx;
   int8_t m_brace;
   int8_t m_bracket;
   int8_t m_inBrace;
   int8_t m_inBracket;
   int8_t m_retryCnt;
-  uint8_t m_jsonCnt;
   int8_t  m_Status;
   bool    m_bKeepAlive;
   bool    m_bPost;
