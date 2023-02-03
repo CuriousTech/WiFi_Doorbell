@@ -6,9 +6,12 @@ public:
   jsonString(const char *pLabel = NULL)
   {
     m_cnt = 0;
+    s = String("{");
     if(pLabel)
-      s = pLabel, s += ";";
-    s += "{";
+    {
+      s += "\"cmd\":\"";
+      s += pLabel, s += "\",";
+    }
   }
         
   String Close(void)
