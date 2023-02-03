@@ -58,13 +58,10 @@ ws = new WebSocket("ws://"+window.location.host+"/ws")
 ws.onopen = function(evt) { }
 ws.onclose = function(evt) { alert("Connection closed."); }
 ws.onmessage = function(evt) {
- lines = evt.data.split(';')
- event=lines[0]
- data=lines[1]
- console.log(data)
- if(event == 'state')
+ console.log(evt.data)
+  d=JSON.parse(evt.data)
+ if(d.cmd == 'state')
  {
-  d=JSON.parse(data)
   dt=new Date(d.t*1000)
   a.time.innerHTML=dt.toLocaleTimeString()
   for(i=0;i<16;i++){
@@ -90,15 +87,15 @@ ws.onmessage = function(evt) {
   a.alert.innerHTML=d.alert
   a.wind.innerHTML='Wind '+d.wind
  }
- else if(event == 'alert')
+ else if(d.cmd == 'alert')
  {
-  alert(data)
+  alert(d.text)
  }
 }
 }
 function setVar(varName, value)
 {
- ws.send('cmd;{"key":"'+a.myKey.value+'","'+varName+'":'+value+'}')
+ ws.send('{"key":"'+a.myKey.value+'","'+varName+'":'+value+'}')
 }
 function reset(){setVar('reset', 0)}
 function oled(){
