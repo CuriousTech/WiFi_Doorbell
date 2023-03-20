@@ -981,7 +981,7 @@ const char *jsonListWeather[] = {
   NULL
 };
 
-const char *jsonListMain[] = { "main",
+const char *jsonListMain[] = {
   "temp",      // 0
   "pressure",
   "humidity",
@@ -989,23 +989,23 @@ const char *jsonListMain[] = { "main",
   "temp_max",
   NULL
 };
-const char *jsonListWind[] = { "wind",
+const char *jsonListWind[] = {
   "speed",      // 0
   "deg",
   "gust",
   NULL
 };
-const char *jsonListRain[] = { "rain",
+const char *jsonListRain[] = {
   "1h",      // 0
   "3h",
   NULL
 };
-const char *jsonListSnow[] = { "snow",
+const char *jsonListSnow[] = {
   "1h",      // 0
   "3h",
   NULL
 };
-const char *jsonListClouds[] = { "clouds",
+const char *jsonListClouds[] = {
   "all",      // 0
   NULL
 };
@@ -1089,8 +1089,6 @@ void owCall()
 
 void innerCallback(int16_t iName, int iValue, char *psValue)
 {
-  String s;
-
   switch(nParseIdx)
   {
     case 0:// weather
@@ -1186,12 +1184,12 @@ struct cond2icon
   const char *pIconNight;
 };
 const cond2icon cdata[] = { // row column from image at http://www.alessioatzeni.com/meteocons/
-  { 1, icon11, icon12},// clear sky     codes at https://openweathermap.org/weather-conditions
+  { 1, icon11, icon12}, // clear sky     codes at https://openweathermap.org/weather-conditions
   { 2, icon21, icon22}, // few clouds
   { 3, icon32, icon71}, // scattered clouds
   { 4, icon51, icon75}, // broken clouds
   { 9, icon36, icon65}, // shower rain
-  {10, icon35, icon64},// rain
+  {10, icon35, icon64}, // rain
   {11, icon33, icon76}, // thunderstorm
   {13, icon43, icon71}, // snow
   {50, icon24, icon31}, // mist
