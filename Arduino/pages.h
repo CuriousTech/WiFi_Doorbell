@@ -72,10 +72,6 @@ ws.onmessage = function(evt) {
   oledon=d.o
   pb0=d.pbdb
   pb1=d.pbm
-  if(d.pir){
-   dt=new Date(d.pir*1000)
-   a.mot.innerHTML=dt.toString().split(' ')[0]+' '+dt.toLocaleTimeString()
-  }
   a.loc.value=d.loc
   a.OLED.value=oledon?'ON ':'OFF'
   a.MOT.value=bmot?'ON ':'OFF'
@@ -150,7 +146,6 @@ startEvents()
 <tr id=r13 style="display:none"><td></td><td><div id="t13"></div></td></tr>
 <tr id=r14 style="display:none"><td></td><td><div id="t14"></div></td></tr>
 <tr id=r15 style="display:none"><td></td><td><div id="t15"></div></td></tr>
-<tr><td>Motion:</td><td><div id="mot"></div></td></tr>
 <tr><td>Display:</td><td><input type="button" value="OFF" id="OLED" onClick="{oled()}"> Mot <input type="button" value="OFF" id="MOT" onClick="{motTog()}"></td></tr>
 <tr><td>PushBullet:</td><td><input type="button" value="OFF" id="PB0" onClick="{pbToggle0()}"> Mot <input type="button" value="OFF" id="PB1" onClick="{pbToggle1()}"></td></tr>
 <tr><td>Settings:</td><td>
