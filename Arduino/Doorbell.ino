@@ -33,7 +33,7 @@ SOFTWARE.
 
 #include <EEPROM.h>
 #include <ESP8266mDNS.h>
-#include <ESPAsyncWebServer.h> // https://github.com/me-no-dev/ESPAsyncWebServer
+#include <ESPAsyncWebServer.h> // https://github.com/mathieucarbou/ESPAsyncWebServer
 #include <UdpTime.h> // https://github.com/CuriousTech/ESP07_WiFiGarageDoor/tree/master/libraries/UdpTime
 #ifdef OTA_ENABLE
 #include <FS.h>
@@ -48,6 +48,12 @@ SOFTWARE.
 #include "jsonstring.h"
 #include "Music.h"
 
+#ifdef REOLINK
+#include <RCSwitch.h> // from library manager
+RCSwitch mySwitch = RCSwitch();
+#define RF433     14
+#endif
+
 #ifdef LEDRING_ENABLE
 #include "LedRing.h"
 #endif
@@ -58,7 +64,6 @@ int serverPort = 80; // port to access this device
 #define ESP_LED   2  // low turns on ESP blue LED
 #define DOORBELL  4 // Note: GPIO4 and GPIO5 are reversed on every pinout on the net
 #define NEORING   5
-#define PIR       14
 #define SCL       13
 #define SDA       12
 
@@ -88,7 +93,7 @@ uint8_t rh;
 uint16_t bp;
 uint8_t nCloud;
 float fWindSpeed;
-uint16_t windDeg;
+uint16_t windDeg = 0;
 float fWindGust;
 
 #define DB_CNT 16
@@ -96,7 +101,6 @@ int doorbellTimeIdx = 0;
 uint32_t doorbellTimes[DB_CNT];
 bool bAutoClear;
 unsigned long dbTime;
-uint32_t pirTime;
 
 #ifdef OLED_ENABLE
 SSD1306 display(0x3c, SDA, SCL); // Initialize the oled display for address 0x3c, sda=12, sdc=13
@@ -136,7 +140,6 @@ String dataJson() // timed/instant pushed data
   js.Var("t", (uint32_t)( now() - ((ee.tz + utime.getDST()) * 3600) ) );
   js.Var("tz", ee.tz);
   js.Var("weather", szWeather[0] );
-  js.Var("pir",  pirTime );
   js.Var("bellCount", doorbellTimeIdx);
   js.Var("o", ee.bEnableOLED );
   js.Var("pbdb", ee.bEnablePB[0] );
@@ -171,7 +174,7 @@ void parseParams(AsyncWebServerRequest *request)
 
   // get password first
   for ( uint8_t i = 0; i < request->params(); i++ ) {
-    AsyncWebParameter* p = request->getParam(i);
+    const AsyncWebParameter* p = request->getParam(i);
 
     String s = request->urlDecode(p->value());
 
@@ -218,7 +221,7 @@ void parseParams(AsyncWebServerRequest *request)
   };
 
   for ( uint8_t i = 0; i < request->params(); i++ ) {
-    AsyncWebParameter* p = request->getParam(i);
+    const AsyncWebParameter* p = request->getParam(i);
     String s = request->urlDecode(p->value());
     bool bValue = (s == "true" || s == "1") ? true:false;
 //    Serial.println( i + " " + server.argName ( i ) + ": " + s);
@@ -362,7 +365,6 @@ void handleJson(AsyncWebServerRequest *request)
   js.Var("temp", String(fTemp, 1) );
   js.Var("rh", rh);
   js.Var("time", (uint32_t)( now() - ((ee.tz + utime.getDST()) * 3600) ) );
-  js.Var("pir", pirTime);
   js.Var("opto", digitalRead(DOORBELL) );
   js.Array("t", doorbellTimes, DB_CNT);
   request->send( 200, "text/json", js.Close() );
@@ -534,9 +536,11 @@ void doorBell()
 
   doorbellTimes[doorbellTimeIdx] = newtime;
 
-  String s = "alert;Doorbell ";
+  jsonString js("alert");
+  String s = "Doorbell ";
   s += timeToTxt( doorbellTimes[doorbellTimeIdx] );
-  ws.textAll(s);
+  js.Var("text", s);
+  ws.textAll(js.Close());
 
   sendState();
   if(ee.szNotifIP[0] && WiFi.status() == WL_CONNECTED)
@@ -563,30 +567,6 @@ void doorBell()
   dbTime = newtime; // latest trigger
 }
 
-// called when motion sensed
-void motion()
-{
-  if(pirTime == 0) // date isn't set yet (the PIR triggers at start anyway)
-    return;
-
-//  Serial.println("Motion");
-  uint32_t newtime = now() - (3600 * (ee.tz + utime.getDST()));
-
-  if( newtime - pirTime < 30) // limit triggers
-    return;
-
-  String s = String("alert;Motion ") + timeToTxt( newtime );
-  ws.textAll(s);
-  sendState();
-  // make sure it's more than 3 mins between triggers to send a PB
-  if( newtime - pirTime > 3 * 60)
-  {
-    if(ee.bEnablePB[1] && WiFi.status() == WL_CONNECTED)
-       pb.send("Doorbell", "Motion at " + timeToTxt(newtime), ee.pbToken );
-  }
-  pirTime = newtime; // latest trigger
-}
-
 void ICACHE_RAM_ATTR doorbellISR()
 {
   static uint32_t lastMS;
@@ -600,13 +580,6 @@ void ICACHE_RAM_ATTR doorbellISR()
   lastMS = ms;
 }
 
-volatile bool bPirTriggered = false;
-
-void ICACHE_RAM_ATTR pirISR()
-{
-  bPirTriggered = true;
-}
-
 void setup()
 {
   Serial.begin(115200);
@@ -614,7 +587,6 @@ void setup()
 
 //  pinMode(ESP_LED, OUTPUT);
   pinMode(DOORBELL, INPUT_PULLUP);
-  pinMode(PIR, INPUT_PULLUP);
 
 #ifdef OLED_ENABLE
   // initialize dispaly
@@ -719,7 +691,11 @@ void setup()
   ring.setEffect(ef_chaser);
 #endif
   attachInterrupt(DOORBELL, doorbellISR, FALLING);
-  attachInterrupt(PIR, pirISR, FALLING);
+
+#ifdef REOLINK
+  pinMode(RF433, INPUT);
+  mySwitch.enableReceive(RF433);
+#endif
 }
 
 void loop()
@@ -737,23 +713,19 @@ void loop()
       ring.setEffect(ee.effect);
   }
 
-  if(bPirTriggered)
-  {
-    bPirTriggered = false;
-    if(ee.bEnableOLED == false) // motion activated display on
-    {
-      displayOnTimer = 30;
-      if(doorbellTimeIdx) // keep flashing bell for this time, and auto reset it in 30 secs
-        bAutoClear = true;
-    }
-    motion();
-  }
-
   if(bDoorBellTriggered)
   {
     bDoorBellTriggered = false;
     doorBell();
   }
+
+#ifdef REOLINK
+  if(mySwitch.available())
+  {
+    if(mySwitch.getReceivedValue() == 0xA70AB2)
+      doorBell();
+  }
+#endif
 
   if(sec_save != second()) // only do stuff once per second (loop is maybe 20-30 Hz)
   {
@@ -763,6 +735,7 @@ void loop()
     {
       if( WiFi.smartConfigDone())
       {
+        WiFi.mode(WIFI_STA);
         Serial.println("SmartConfig set");
         bConfigDone = true;
         connectTimer = now();
@@ -775,6 +748,7 @@ void loop()
         if(!bStarted)
         {
           Serial.println("WiFi Connected");
+          WiFi.mode(WIFI_STA);
           MDNS.begin( doorbell );
           bStarted = true;
           MDNS.addService("iot", "tcp", serverPort);
@@ -788,7 +762,7 @@ void loop()
       {
         Serial.println("Connect failed. Starting SmartConfig");
         connectTimer = now();
-        ee.szSSID[0] = 0;
+//        ee.szSSID[0] = 0;
         WiFi.mode(WIFI_AP_STA);
         WiFi.beginSmartConfig();
         bConfigDone = false;
@@ -1029,6 +1003,7 @@ void owCallback(int16_t iName, int iValue, char *psValue)
       innerParse.process(psValue);
       break;
     case 1: // main
+//      ws.textAll(String("{\"cmd\":\"print\",\"main\":\"") + psValue + "\"");
       innerParse.setList(jsonListMain);
       nParseIdx = 1;
       innerParse.process(psValue);
@@ -1054,7 +1029,7 @@ void owCallback(int16_t iName, int iValue, char *psValue)
       innerParse.process(psValue);
       break;
     case 6: // dt
-//      ws.textAll(String("{\"cmd\":\"print\",\"dt\":") + psValue + "\"");
+      ws.textAll(String("{\"cmd\":\"print\",\"dt\":") + psValue + "}");
       break;
     case 7: // sys {"type":1,"id":1128,"message":0.0033,"country":"US","sunrise":1542284504,"sunset":1542320651}
 //      ws.textAll(String("{\"cmd\":\"print\",\"sys\":\"") + psValue + "\"");
