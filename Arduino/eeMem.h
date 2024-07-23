@@ -24,15 +24,16 @@ public:
   bool    bMotion = false;        // motion activated clear
   char    pbToken[40] = "pushbullet token";    // 34
   char    owKey[36] = "openweather key";      // 32
-  char    szNotifIP[16] = "192.168.31.158"; // Another device that can make sounds or text
-  char    szNotifPath[44] = "/s?key=esp8266ct&music=0";
+  char    szNotifIP[16] = "192.168.31.158";  // Another device that can make sounds or text
+  char    szNotifPath[44] = "/s?key=password&music=0";
   uint16_t NotifPort = 80;
   uint8_t  hostIP[4] = {192,168,31,100};
   uint16_t hostPort = 80;
   uint8_t  melody = 0;
   uint8_t  effect = 0;
   uint8_t  bright[24] = {40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40,40};
-  uint8_t  res[14] = {0};
+  uint32_t reolinkCode = 0;//0xA70AB2;
+  uint8_t  res[10] = {0};
   uint8_t end;
 };
 
