@@ -722,8 +722,23 @@ void loop()
 #ifdef REOLINK
   if(mySwitch.available())
   {
-    if(mySwitch.getReceivedValue() == 0xA70AB2)
+    uint32_t code = mySwitch.getReceivedValue();
+    if(ee.reolinkCode && code == ee.reolinkCode)
       doorBell();
+    else
+    {
+      jsonString js("alert");
+      String s = "RF code ";
+      s += code;
+
+      if( ee.reolinkCode == 0)
+      {
+        ee.reolinkCode = code;
+        s += " set";
+      }
+      js.Var("text", s);
+      ws.textAll(js.Close());
+    }
   }
 #endif
 
@@ -1029,7 +1044,7 @@ void owCallback(int16_t iName, int iValue, char *psValue)
       innerParse.process(psValue);
       break;
     case 6: // dt
-      ws.textAll(String("{\"cmd\":\"print\",\"dt\":") + psValue + "}");
+//    ws.textAll(String("{\"cmd\":\"print\",\"dt\":") + psValue + "}");
       break;
     case 7: // sys {"type":1,"id":1128,"message":0.0033,"country":"US","sunrise":1542284504,"sunset":1542320651}
 //      ws.textAll(String("{\"cmd\":\"print\",\"sys\":\"") + psValue + "\"");
